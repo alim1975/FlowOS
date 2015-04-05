@@ -32,8 +32,8 @@
 .deps
 .libs
 
-Makefile
-Makefile.in
+#Makefile
+#Makefile.in
 *.log
 config.sub
 config.status
