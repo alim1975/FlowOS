@@ -1,5 +1,6 @@
 include $(top_srcdir)/config.mk
 
-SUBDIRS = scheduler
+SUBDIRS = scheduler channel
 
-TESTS = scheduler/scheduler
+TESTS = scheduler/scheduler-test channel/channel-test
+

@@ -1,20 +1,18 @@
-#ifndef __FOS_FLOW__
-#define __FOS_FLOW__
+#ifndef __FLOW_H__
+#define __FLOW_H__
 
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/queue.h>
-#include <pthread.h>
 
-#include <rte_ethdev.h>
+#include <rte_spinlock.h>
 
 #include "flowid.h"
-#include "pipeline.h"
 #include "packet.h"
+#include "pipeline.h"
 
 /* maximum number of packets to buffer */
 #define MAX_FLOW_SIZE 2048
-#define MIN_HEAP_SIZE 16
 #define MAX_LEVELS    8
 
 /* A flow */
@@ -23,37 +21,38 @@ struct flow {
   char name[80];
   /* what defines this flow */
   struct flowid id;
-  /* id->in_port to map */
-  struct rte_eth_dev *idev;
-  /* output route */
-  //struct rtable *rt;
-  void *tcb_out;
   /* flow capacity */
-  int capacity;
-  /* current szie */
-  volatile unsigned size;
+  uint16_t capacity;
+  /* current size */
+  uint16_t size;
   /* flow head */
-  struct packet *head; 
-  /* flow tail */
-  struct packet *tail; 
-  /* to lock flow tail */
-  pthread_mutex_t tail_lock;
+  TAILQ_HEAD(, packet) head;
+  rte_spinlock_t lock;
   /* protocols this flow considers */
-  uint8_t num_protos;
+  uint8_t protocolCount;
   char *protocols[MAX_LEVELS]; 
   /* processing pipeline for this flow */
-  struct pipeline *pipeline;
+  pipeline_t pipeline;
   /* to create the list of flows */
   TAILQ_ENTRY(flow) list;
 };
+typedef struct flow* flow_t;
 
-typedef TAILQ_HEAD(, flow) flow_head_t;
+flow_t  flow_create(struct flowid id, char *fname);
 
-struct flow   *flow_create(struct flowid *id, char *fname);
-void           flow_delete(struct flow *); 
-void           flow_set_protocols(struct flow *flow, char *protos);
-uint8_t        flow_get_level(struct flow *flow, char *proto);
-int            is_tcp_flow(struct flow *);
+void    flow_delete(flow_t flow); 
+
+void    flow_set_protocols(flow_t flow, char *protocols);
+
+int8_t  flow_get_level(flow_t flow, char *proto);
+
+int     is_tcp_flow(flow_t flow);
+
+packet_t flowos_decode_mbuf(struct rte_mbuf *mbuf, flow_t flow);
+
+flow_t flowos_classify_packet(struct rte_mbuf *mbuf);
+
+/*
 int            flow_attach_pm(struct flow *, pthread_t , uint8_t); 
 int            flow_detach_pm(char *, char *);
 void           flow_append_packet(struct flow *flow, struct packet *pkt);
@@ -67,5 +66,5 @@ extern int          flowos_remove_flow(char *fname);
 extern pthread_t *flowos_find_pm(char *name);
 extern void      flowos_save_pm(pthread_t *);
 extern int       flowos_remove_pm(char *name);
-
-#endif /* _FLOW_H_ */
+*/
+#endif /* __FLOW_H__ */

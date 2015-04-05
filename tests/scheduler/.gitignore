@@ -1,1 +1,9 @@
-scheduler
+scheduler-test
+*.o
+*~
+*.out
+*.log
+*.log
+.*
+!.gitignore
+

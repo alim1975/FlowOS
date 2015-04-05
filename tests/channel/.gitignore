@@ -1,0 +1,7 @@
+*.txt
+*.out
+*~
+*.o
+*.log
+channel-test
+

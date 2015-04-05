@@ -5,8 +5,7 @@
 #include "debug.h"
 
 /*----------------------------------------------------------------------------*/
-inline int GetOutputInterface(uint32_t daddr)
-{
+inline int GetOutputInterface(uint32_t daddr) {
   int nif = -1;
   int i;
   int prefix = 0;
@@ -31,8 +30,11 @@ inline int GetOutputInterface(uint32_t daddr)
   return nif;
 }
 /*----------------------------------------------------------------------------*/
-uint8_t *IPOutputStandalone(struct mtcp_manager *mtcp, uint16_t ip_id, uint32_t saddr, uint32_t daddr, uint16_t tcplen)
-{
+uint8_t *IPOutputStandalone(struct mtcp_manager *mtcp, 
+			    uint16_t ip_id, 
+			    uint32_t saddr, 
+			    uint32_t daddr, 
+			    uint16_t tcplen) {
   struct iphdr *iph;
   int nif;
   unsigned char * haddr;
@@ -73,15 +75,15 @@ uint8_t *IPOutputStandalone(struct mtcp_manager *mtcp, uint16_t ip_id, uint32_t 
   return (uint8_t *)(iph + 1);
 }
 /*----------------------------------------------------------------------------*/
-uint8_t *IPOutput(struct mtcp_manager *mtcp, tcp_stream *stream, uint16_t tcplen)
-{
+uint8_t *IPOutput(struct mtcp_manager *mtcp, tcp_stream *stream, uint16_t tcplen) {
   struct iphdr *iph;
   int nif;
   unsigned char *haddr;
   
   if (stream->sndvar->nif_out >= 0) {
     nif = stream->sndvar->nif_out;
-  } else {
+  } 
+  else {
     nif = GetOutputInterface(stream->daddr);
     stream->sndvar->nif_out = nif;
   }

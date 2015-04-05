@@ -3,6 +3,7 @@
 #include <sys/types.h>
 
 #include <rte_malloc.h>
+#include <rte_ether.h>
 
 #include "flowos.h"
 #include "arp.h"
@@ -48,7 +49,7 @@ struct arp_manager {
   int cnt;
 };
 /*--------------------------------------------------------------------*/
-struct arp_manager arpm;
+static struct arp_manager arpm;
 /*--------------------------------------------------------------------*/
 void flowos_dump_arp_packet(struct arphdr *arph);
 /*--------------------------------------------------------------------*/
@@ -110,7 +111,7 @@ unsigned char *flowos_get_dest_mac_address(uint32_t dip) {
 }
 /*--------------------------------------------------------------------*/
 static int flowos_arp_output(flowos_t flowos, int nif, int opcode,
-		     uint32_t dst_ip, unsigned char *dst_haddr) {
+			     uint32_t dst_ip, unsigned char *dst_haddr) {
   if (! dst_haddr) return -1;
 
   /* Allocate a buffer */
@@ -180,11 +181,12 @@ void flowos_send_arp_request(flowos_t flowos, uint32_t ip, int nif, uint32_t cur
 }
 /*-------------------------------------------------------------------*/
 static int flowos_process_arp_request(flowos_t flowos, 
-				      struct arphdr *arph, 
+				      struct rte_mbuf *pkt,
 				      int nif, 
 				      uint32_t cur_ts) {
   unsigned char *temp;
-  
+  struct arphdr *arph = (struct arphdr *)
+    (rte_pktmbuf_mtod(pkt, char *) + sizeof(struct ether_hdr));  
   /* register the arp entry if not exist */
   temp = flowos_get_dest_mac_address(arph->ar_sip);
   if (! temp) {
@@ -193,14 +195,18 @@ static int flowos_process_arp_request(flowos_t flowos,
   }
   /* send ARP reply */
   flowos_arp_output(flowos, nif, arp_op_reply, arph->ar_sip, arph->ar_sha);
-  
+ 
+  rte_pktmbuf_free(pkt);
   return 0;
 }
 /*----------------------------------------------------------------------------*/
-static int flowos_process_arp_reply(flowos_t flowos, struct arphdr *arph, uint32_t cur_ts) {
+static int flowos_process_arp_reply(flowos_t flowos, 
+				    struct rte_mbuf *pkt,
+				    uint32_t cur_ts) {
   unsigned char *temp;
   struct arp_queue_entry *ent;
-  
+  struct arphdr *arph = (struct arphdr *)
+    (rte_pktmbuf_mtod(pkt, char *) + sizeof(struct ether_hdr));
   /* register the arp entry if not exist */
   temp = flowos_get_dest_mac_address(arph->ar_sip);
   if (! temp) {
@@ -215,28 +221,30 @@ static int flowos_process_arp_reply(flowos_t flowos, struct arphdr *arph, uint32
       break;
     }
   }
-  
+
+  rte_pktmbuf_free(pkt);  
   return 0;
 }
 /*-------------------------------------------------------------------*/
 int flowos_process_arp_packet(flowos_t flowos, uint32_t cur_ts,
 			      const int ifidx, struct rte_mbuf *pkt) {
   struct arphdr *arph = (struct arphdr *)
-    (rte_pktmbuf_mtod(pkt, unsigned char *) + sizeof(struct ether_hdr));
+    (rte_pktmbuf_mtod(pkt, char *) + sizeof(struct ether_hdr));
 
   int i;
-  int to_me = 0;
+  int to_me = FALSE;
   
   /* process the arp messages destined to me */
   for (i = 0; i < CONFIG.eths_num; i++) {
     if (arph->ar_tip == CONFIG.eths[i].ip_addr) {
-      to_me = 1;
+      to_me = TRUE;
     }
   }
   
   if (! to_me) {
-    //printf("ARP packet for me...\n");
-    return 1;
+    printf("ARP packet for me...\n");
+    rte_pktmbuf_free(pkt);
+    return TRUE;
   }
 #if DBGMSG
   flowos_dump_arp_packet(arph);
@@ -244,18 +252,19 @@ int flowos_process_arp_packet(flowos_t flowos, uint32_t cur_ts,
 
   switch (ntohs(arph->ar_op)) {
   case arp_op_request:
-    flowos_process_arp_request(flowos, arph, ifidx, cur_ts);
+    flowos_process_arp_request(flowos, pkt, ifidx, cur_ts);
     break;
     
   case arp_op_reply:
-    flowos_process_arp_reply(flowos, arph, cur_ts);
+    flowos_process_arp_reply(flowos, pkt, cur_ts);
     break;
     
   default:
+    rte_pktmbuf_free(pkt);
     break;
   }
   
-  return 1;
+  return TRUE;
 }
 /*-------------------------------------------------------------------*/
 // Publish my address

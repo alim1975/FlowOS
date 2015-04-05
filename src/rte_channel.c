@@ -1,16 +1,16 @@
-#include "../include/channel.h"
+#include "../include/rte_channel.h"
 #include "../include/task.h"
 
 #include <rte_mempool.h>
 #include <assert.h>
 
 static struct rte_mempool *channel_pool = NULL;
-static const size_t channel_capacity = 1024;
-int channel_pool_create(uint16_t capacity) {
+
+int channel_pool_create(uint16_t size, uint16_t ch_size) {
   assert(channel_pool == NULL);
   channel_pool = rte_mempool_create("flowos_channel_pool",
-				    capacity,
-				    sizeof(struct channel),
+				    size,
+				    sizeof(struct channel) + sizeof(void *) * ch_size,
 				    0, 0, 
 				    NULL, NULL, NULL, NULL,
 				    0, 0);
@@ -25,20 +25,13 @@ void channel_pool_destroy() {
   channel_pool = NULL;
 }
 
-void channel_init(channel_t channel, size_t size) {
-  rte_atomic16_init(&channel->size);
-  channel->capacity = size;
-  TAILQ_INIT(&channel->head);
-  rte_spinlock_init(&channel->lock);
-}
-
 channel_t channel_get() {
   channel_t channel;
   if (rte_mempool_mc_get(channel_pool, (void**)&channel) != 0) {
     printf("channel_get(): channel pool is empty.\n");
     return NULL;
   }
-  channel_init(channel, channel_capacity);
+  //channel_init(channel);
   return channel;
 }
 
@@ -51,44 +44,37 @@ int channel_is_full(channel_t channel) {
 }
 
 int channel_is_empty(channel_t channel) {
-  uint16_t exp = 0;
-  return rte_atomic16_cmpset(&channel->size, exp, 0);
+  return rte_atomic16_cmpset(&channel->size, 0, 0);
 }
 
-void channel_insert(channel_t channel, packet_t pkt) {
-  rte_spinlock_lock(&channel->lock);
-  assert(channel->size < channel->capacity);
-  TAILQ_INSERT_TAIL(&channel->head, pkt, list);
-  channel->size++;
-  //printf("channel_insert(): size = %d\n", channel_size(channel));
-  rte_spinlock_unlock(&channel->lock);
-  if (channel->consumer && channel_is_full(channel)) {
+void channel_insert(channel_t channel, void *item) {
+  uint16_t index = rte_atomic16_read(&channel->writeIndex);
+  assert(! channel_is_full(channel));
+  channel->array[index] = item;
+  index  = (index + 1) % channel->capacity;
+  rte_atomic16_set(&channel->writeIndex, index);
+  rte_atomic16_inc(&channel->size);
+  if (channel->consumer) {
     task_unblock_rx(channel->consumer, channel->consumerIndex);
   }
 }
 
-packet_t channel_remove(channel_t channel) {
-  packet_t pkt;
-  rte_spinlock_lock(&channel->lock);
-  assert(channel->size > 0);
-  pkt = TAILQ_FIRST(&channel->head);
-  TAILQ_REMOVE(&channel->head, pkt, list);
-  channel->size--;
-  //printf("channel_remove(): size = %d\n", channel_size(channel));
-  rte_spinlock_unlock(&channel->lock);
-  if (channel->producer && channel_is_empty(channel)) {
+void *channel_remove(channel_t channel) {
+  void *item;
+  uint16_t index = rte_atomic16_read(&channel->readIndex);
+  assert(! channel_is_empty(channel));
+  item = channel->array[index];
+  index = (index + 1) % channel->capacity;
+  rte_atomic16_set(&channel->readIndex, index);
+  rte_atomic16_dec(&channel->size);
+  if (channel->producer) {
     task_unblock_tx(channel->producer, channel->producerIndex);
   }
-  return pkt;
 }
 
-int channel_size(channel_t channel) {
-  return rte_atomic16_read(&channel->size);
-}
-
-packet_t channel_peek(channel_t channel) {
+void *channel_peek(channel_t channel) {
   assert(! channel_is_empty(channel));
-  return TAILQ_FIRST(&channel->head);
+  return channel->array[rte_atomic16_read(&channel->readIndex)];
 }
 
 void channel_close(channel_t channel) {

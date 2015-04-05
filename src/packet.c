@@ -12,50 +12,43 @@ static struct rte_mempool *packet_cache;
 static int pkt_new = 0;
 static int pkt_del = 0;
 
-int packet_cache_init(void) {
-  packet_cache = rte_mempool_create("flowos_packet_cache", 
+int packet_cache_init() {
+  packet_cache = rte_mempool_create("packet_cache", 
 				    POOL_SIZE,
 				    sizeof(struct packet),
 				    0, 0, /* cache, private */
-				    /* ctor, ctorarg, dtor, dtorarg*/ 
 				    NULL, NULL, NULL, NULL,
 				    0, 0); /* CPU, flag */
-  if(! packet_cache) return -1;
-  
+  if (! packet_cache) {
+    printf("FlowOS failed to initialize packet cache.\n");
+    return -1;
+  }
   return 0;
 }
 
-inline void packet_cache_delete(void)
-{
-  printf("FlowOS created %d packets, deletes %d packets\n", pkt_new, pkt_del);
+inline void packet_cache_delete() {
   packet_cache = NULL;
 }
 
-struct packet *packet_create_dummy(void)
-{
-  struct packet *packet;
-  if (rte_mempool_sc_get(packet_cache, (void **)&packet) != 0) {
-    printf("packet_create(): failed to allocate memory\n");
+packet_t packet_create_dummy() {
+  packet_t packet;
+  if (rte_mempool_get(packet_cache, (void **)&packet) != 0) {
+    printf("packet_create(): failed to create new packet\n");
     return NULL;
   }
-  pkt_new++;
   packet->mbuf = NULL;
   packet->levels = 0;
   packet->seq = 0;
   packet->status = 0;
-  //  TAILQ_INIT(&packet->list);
   return packet;
 }
 
-struct packet *packet_create(struct rte_mbuf *mbuf, uint8_t levels)
-{
-  struct packet *pkt;
-
-  if(rte_mempool_sc_get(packet_cache, (void **)&pkt) != 0) {
-    printf("packet_create(): failed to allocate memory\n");
+packet_t packet_create(struct rte_mbuf *mbuf, uint8_t levels) {
+  packet_t pkt;
+  if (rte_mempool_get(packet_cache, (void **)&pkt) != 0) {
+    printf("packet_create(): failed to create new packet.\n");
     return NULL;
   }
-  pkt_new++;
   pkt->mbuf = mbuf; 
   pkt->levels = levels;
   pkt->seq = 0;
@@ -63,13 +56,11 @@ struct packet *packet_create(struct rte_mbuf *mbuf, uint8_t levels)
   pkt->sacked = 0;
   pkt->sack_ptr = NULL;
   pkt->sack_cnt = 0;
-  //  TAILQ_INIT(&pkt->list);
   return pkt;
 }
 
 /* Delete data bytes from a TCP/UDP packet */
-void packet_del_bytes(struct packet *pkt, char *from, int count)
-{
+void packet_del_bytes(packet_t pkt, char *from, int count) {
   int len;
   char *ptr;
   uint16_t new_tlen;
@@ -96,7 +87,7 @@ void packet_del_bytes(struct packet *pkt, char *from, int count)
     return;
   }
   if (count > 0 && (packet_end(pkt) - from) < count) {
-    printk("packet_del_bytes(): not enough bytes to delete\n");
+    printf("packet_del_bytes(): not enough bytes to delete\n");
     return;
   }
   pkt->status = 1; /* modified */
@@ -131,9 +122,8 @@ void packet_del_bytes(struct packet *pkt, char *from, int count)
   }
 }
 
-inline void packet_delete(struct packet *packet) {
+inline void packet_delete(packet_t packet) {
   if (packet) {
      rte_mempool_put(packet_cache, packet); 
-     pkt_del++;
   }
 }

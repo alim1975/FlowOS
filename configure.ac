@@ -30,6 +30,7 @@ AC_CONFIG_FILES([Makefile
         src/Makefile
 	tests/Makefile
 	tests/scheduler/Makefile
+	tests/channel/Makefile
 ])
 AC_OUTPUT
 

@@ -157,7 +157,6 @@ static struct flow *flowos_classify_skb(struct rte_mbuf *mbuf) {
       if (strcmp(mbuf->name, flow->id.in_port)) continue;
       fields |= FLOWOS_IN_PORT;
     }
-        
     /* MAC source and destination addresses */
     if ((flow->id.fields & FLOWOS_MAC_SRC) || 
        (flow->id.fields & FLOWOS_MAC_DST)) {
@@ -166,17 +165,13 @@ static struct flow *flowos_classify_skb(struct rte_mbuf *mbuf) {
       if (!mach) continue;
       /* MAC source address */
       if (flow->id.fields & FLOWOS_MAC_SRC) {
-	if (strncmp(flow->id.mac_src, 
-		   mach->h_source, 
-		   ETH_ALEN) != 0)
+	if (strncmp(flow->id.mac_src, mach->h_source, ETH_ALEN) != 0)
 	  continue;
 	fields |= FLOWOS_MAC_SRC; 
       }
       /* MAC destination address */
       if(flow->id.fields & FLOWOS_MAC_DST){
-	if(strncmp(flow->id.mac_dst, 
-		   mach->h_dest, 
-		   ETH_ALEN) != 0)
+	if(strncmp(flow->id.mac_dst, mach->h_dest, ETH_ALEN) != 0)
 	  continue;
 	fields |= FLOWOS_MAC_DST;
       }
@@ -185,11 +180,10 @@ static struct flow *flowos_classify_skb(struct rte_mbuf *mbuf) {
     iph = (struct iphdr *)mbuf_network_header(mbuf);
 
     /* IP source address and destination address */
-    if ((flow->id.fields & FLOWOS_IPv4_SRC) || 
-       (flow->id.fields & FLOWOS_IPv4_DST)) {
+    if ((flow->id.fields & FLOWOS_IPv4_SRC) || (flow->id.fields & FLOWOS_IPv4_DST)) {
       /* IPv4 source address */
       if (flow->id.fields & FLOWOS_IPv4_SRC) {
-	if (flow->id.ip_src.s_addr != iph->saddr) continue;	
+	if (flow->id.ip_src.s_addr != iph->saddr) continue;
 	else fields |= FLOWOS_IPv4_SRC;	
       }
       /* IPv4 destination address */
@@ -199,8 +193,7 @@ static struct flow *flowos_classify_skb(struct rte_mbuf *mbuf) {
       }
     }    
     /* TCP source and destination ports */
-    if ((flow->id.fields & FLOWOS_TCP_SRC) || 
-       (flow->id.fields & FLOWOS_TCP_DST)) {
+    if ((flow->id.fields & FLOWOS_TCP_SRC) || (flow->id.fields & FLOWOS_TCP_DST)) {
       if (iph->protocol == IPPROTO_TCP)
 	tcph = (struct tcphdr *) ((char *)iph + (iph->ihl << 2)); 
       else continue;
@@ -216,8 +209,7 @@ static struct flow *flowos_classify_skb(struct rte_mbuf *mbuf) {
       }
     }
     /* UDP source and destination ports */
-    if ((flow->id.fields & FLOWOS_UDP_SRC) || 
-       (flow->id.fields & FLOWOS_UDP_DST)) {
+    if ((flow->id.fields & FLOWOS_UDP_SRC) || (flow->id.fields & FLOWOS_UDP_DST)) {
       if (iph->protocol == IPPROTO_UDP)
 	udph = (struct udphdr *) ((u_char *)iph + (iph->ihl << 2)); 
       else continue;

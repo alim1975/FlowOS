@@ -1,5 +1,5 @@
-#ifndef __CONFIG_H_
-#define __CONFIG_H_
+#ifndef __CONFIG_H__
+#define __CONFIG_H__
 
 int flowos_load_tcp_config(char *fname);
 
@@ -22,4 +22,4 @@ void flowos_print_routing_table();
 /* set socket modes */
 int set_socket_mode(int8_t socket_mode);
 
-#endif /* __CONFIG_H_ */
+#endif /* __CONFIG_H__ */

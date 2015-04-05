@@ -21,6 +21,8 @@ struct task {
   channel_t txChannels[MAX_CHANNELS];
   uint8_t rxCount;
   uint8_t txCount;
+  uint8_t nextRxIndex;
+  uint8_t nextTxIndex;
   uint32_t runnable;
   rte_atomic32_t status;
   task_fn run;
@@ -53,4 +55,7 @@ void task_set_rx_channel(task_t task, uint8_t index, channel_t rxChannel);
 
 void task_set_tx_channel(task_t task, uint8_t index, channel_t txChannel);
 
+channel_t task_get_rx_channel(task_t task, uint8_t index);
+
+channel_t task_get_tx_channel(task_t task, uint8_t index);
 #endif //__TASK_H__

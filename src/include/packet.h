@@ -7,7 +7,7 @@
 #include <sys/queue.h>
 
 #define MAX_LEVELS 8
-#define POOL_SIZE 4096
+#define POOL_SIZE 10000
 
 struct packet {
   uint8_t levels;
@@ -29,7 +29,7 @@ struct packet {
   TAILQ_ENTRY(packet) list;
 };
 
-typedef TAILQ_HEAD(, packet) packet_list_t;
+typedef struct packet* packet_t;
 
 #ifndef UINT32_MAX
 #define UINT32_MAX 0xFFFFFFFF

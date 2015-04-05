@@ -1,9 +1,17 @@
-#ifndef __ARP_H_
-#define __ARP_H_
-
-#include "flowos.h"
+#ifndef __ARP_H__
+#define __ARP_H__
 
 #define MAX_ARPENTRY 128
+
+#ifndef TRUE
+#define TRUE 1
+#endif
+
+#ifndef FALSE
+#define FALSE 0
+#endif
+
+typedef struct flowos* flowos_t;
 
 int flowos_init_arp_table();
 
@@ -20,4 +28,4 @@ void flowos_publish_arp(flowos_t flowos);
 
 void flowos_print_arp_table();
 
-#endif /* __ARP_H_ */
+#endif /* __ARP_H__ */

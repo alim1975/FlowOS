@@ -11,7 +11,7 @@
 
 static scheduler_t SCHEDULER = NULL;
 
-int task_executor(void *data) {
+static int task_executor(void *data) {
   task_t task;
   while (true) {
     pthread_mutex_lock(&SCHEDULER->lock);
@@ -20,7 +20,8 @@ int task_executor(void *data) {
       pthread_cond_wait(&SCHEDULER->condition, &SCHEDULER->lock);
     }
     pthread_mutex_unlock(&SCHEDULER->lock);
-    task->run(task->data);
+    //printf("scheduler starts task %u\n", task->id);
+    task->run(task);
     task_reset_running(task);
   }
   return 0;
@@ -45,7 +46,7 @@ void scheduler_init(size_t size) {
   // 1 master and 1 reserved for the TCP thread
   lcore = rte_lcore_count();
   printf("No. of lcores found=%d\n", lcore);
-  lcore -= 2;
+  lcore -= 1;
   assert(size <= lcore);
   SCHEDULER->size = size;
   pthread_cond_init(&SCHEDULER->condition, NULL);
@@ -53,7 +54,7 @@ void scheduler_init(size_t size) {
   i = 0; // 1st slave lcore is reserved for mTCP
   RTE_LCORE_FOREACH_SLAVE(lcore) {
     if (i++ < 1) continue;
-    if (i > SCHEDULER->size) break;
+    //if (i > SCHEDULER->size) break;
     printf ("Creating %d-th worker thread.\n", i);
     if (rte_eal_remote_launch(task_executor, SCHEDULER, lcore) != 0) {
       rte_free(SCHEDULER);

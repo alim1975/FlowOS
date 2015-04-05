@@ -1,3 +1,5 @@
+#include <rte_ether.h>
+
 #include "ip_in.h"
 #include "eth_in.h"
 #include "arp.h"
@@ -7,11 +9,13 @@ int flowos_process_packet(flowos_t flowos,
 			  const int ifidx, 
 			  uint32_t cur_ts, 
 			  struct rte_mbuf *pkt) {
-  struct ethhdr *ethh = (struct ethhdr *) rte_pktmbuf_mtod(m, struct ether_hdr *);
+  int ret;
+  struct ether_hdr *ethh = (struct ether_hdr *) 
+    rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 
-  u_short ip_proto = ntohs(ethh->h_proto);
-  int ret, i;
-  //printf("Process packet of len %d\n", len);
+  u_short ip_proto = ntohs(ethh->ether_type);
+
+  int len = rte_pktmbuf_pkt_len(pkt);
 #ifdef PKTDUMP
   DumpPacket(mtcp, (char *)pkt_data, len, "IN", ifidx);
 #endif
@@ -37,38 +41,18 @@ int flowos_process_packet(flowos_t flowos,
 	 ethh->h_dest[4],
 	 ethh->h_dest[5]);
   */
-#if 0
-  /* ignore mac address which is not for current interface */
-  int i;
-  for (i = 0; i < 6; i ++) {
-    if (ethh->h_dest[i] != CONFIG.eths[ifidx].haddr[i]) {
-      return FALSE;
-    }
-  }
-#endif
-  
+  /* process ipv4 packet */
   if (ip_proto == ETH_P_IP) {
-    /* process ipv4 packet */
-    
-
-    //printf("Process IP packet...\n");
-    ret = ProcessIPv4Packet(mtcp, cur_ts, ifidx, pkt_data, len);    
+    ret = flowos_process_ipv4_packet(flowos, cur_ts, ifidx, pkt);
   } 
   else if (ip_proto == ETH_P_ARP) {
-    //printf("Process ARP packet...\n");
-    ProcessARPPacket(mtcp, cur_ts, ifidx, pkt_data, len);
-    return TRUE;    
+    flowos_process_arp_packet(flowos, cur_ts, ifidx, pkt);
+    return TRUE;
   } 
   else {
-    //printf("Drop, unknown packet...\n");
-    DumpPacket(mtcp, (char *)pkt_data, len, "??", ifidx);
-    /*
-    struct ps_packet packet;
-    packet.ifindex = ifidx;
-    packet.len = len;
-    packet.buf = (char *)pkt_data;
-    ps_slowpath_packet(mtcp->ctx->handle, &packet);
-    */
+    printf("flowos_process_packet() unknown packet\n");
+    //DumpPacket(flowos, (char *)pkt_data, len, "??", ifidx);
+    rte_pktmbuf_free(pkt);  
     return FALSE;
   }
   

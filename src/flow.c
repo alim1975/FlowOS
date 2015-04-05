@@ -1,264 +1,248 @@
-#include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <netinet/in.h>
 #include <string.h>
 
+#include <rte_mempool.h>
+#include <rte_ether.h>
+
 #include "protocol.h"
 #include "flow.h"
-#include "pmodule.h"
 
-extern struct list_head *flowos_flow_list(void);
-extern void txhandler_dispatch_stream(struct streamp *);
-extern int flowos_add_rxdev(struct flow *flow);
-extern struct rxdev *is_rx_handler_registered(struct net_device *dev);
-extern void flowos_del_rxdev(struct flow *flow);
-extern void mtcp_shutdown_tcb(void *tcb);
+static rte_mempool *flow_pool = NULL;
+int flow_pool_init(uint32_t size) {
+  flow_pool = rte_mempool_create("flow_pool", 
+				 size,
+				 sizeof(struct flow),
+				 0, 0, 
+				 NULL, NULL, NULL, NULL,
+				 0, 0);
+  if (! flow_pool) {
+    printf("FlowoS failed to create flow pool.\n");
+    return -1;
+  }
+  return 0;
+}
 
 /* Create a new flow */
-struct flow *flow_create(struct flowid *id, char *fname)
-{
-  struct flow *flow; 
-  struct net_device *idev;
-  /* input port is not accessible/available */
-  idev = dev_get_by_name(&init_net, id->in_port);
-  if(! idev){
-    printk(KERN_INFO "flow_create(): Unable to open input port [%s]\n", 
-	   id->in_port);
+flow_t flow_create(flowid_t id, char *name) {
+  flow_t flow;
+  if ( rte_mempool_get(flow_pool, &flow) != 0) {
+    printf("flow_create() failed to create flow entry.\n");
     return NULL;
   }
-  /* allocate a flow */
-  flow = kmalloc(sizeof(*flow), GFP_KERNEL);
-  if(! flow){
-    printk(KERN_INFO "flow_create(): Unable to allocate memory\n");
-    return NULL;
-  }
-  memcpy(&flow->id, id, sizeof(*id)); 
-  flow->idev = idev;
-  flow->rt = NULL;
   /* set flow name */
-  strcpy(flow->name, fname);
+  strcpy(flow->name, name);
+  memcpy(&flow->id, id, sizeof(*id)); 
   /* number of protocols to be parsed */
-  flow->num_protos = 0;
+  flow->protocolCount = 0;
   /* MAX queue size for flow */
   flow->capacity = MAX_FLOW_SIZE;
-  /* current size */
-  atomic_set(&flow->size, 0); 
-  /* list of packet contains a dummy packet */
-  flow->head = flow->tail = packet_create_dummy();
-  //spin_lock_init(&flow->head_lock);
-  spin_lock_init(&flow->tail_lock);  
   flow->pipeline = NULL;
+  TAILQ_INIT(&flow->head);
+  rte_spinlock_init(&flow->lock);
   /* append the flow to the flow list */
-  flowos_save_flow(flow);
-  /* register RX handler */
-  if(! is_rx_handler_registered(flow->idev))
-    flowos_register_rx_handler(flow->idev, flowos_rx_handler);
-  /* add flow to rxdev list */
-  if(flowos_add_rxdev(flow) != 0){
-    printk(KERN_INFO "FlowOS: error in adding tap dev to list\n");
-  }
+  flowos_insert_flow(&flowos.flow_list, flow);
   return flow;
 }
 
 /* enqueue the packet to the tail */
-void flow_append_packet(struct flow *flow, struct packet *pkt)
-{
-  int i;
-  struct flowos_pm *pm;
-  struct streamp stp;
-  //printk(KERN_DEBUG "flow_append_packet(): adding packet to flow tail.\n");
-  spin_lock_bh(&flow->tail_lock);
-  flow->tail->skb = pkt->skb;
-  flow->tail->levels = pkt->levels;
-  for(i = 0; i < MAX_LEVELS; i++)
-    flow->tail->parray[i] = pkt->parray[i];
-  flow->tail->tseq = pkt->tseq;
-  flow->tail->tack = pkt->tack;
-  flow->tail->tlen = pkt->tlen;
-  flow->tail->tsval = pkt->tsval;
-  pkt->seq = flow->tail->seq + 1;
-  pkt->skb = NULL;
-  pkt->levels = 0;
-  pkt->prev = flow->tail;   
-  flow->tail->next = pkt;
-  flow->tail = flow->tail->next;
-  spin_unlock_bh(&flow->tail_lock);  
-  atomic_inc(&flow->size);
-
-  if(flow->pipeline == NULL){      /* No PM to process the flow, send out */
-    //printk(KERN_DEBUG "flow_append_packet(): pipeline is empty, dispatching packet to kernel.\n");
-    streamp_init(&stp, flow, 0);   /* set level IP */
-    streamp_set_packet(&stp, pkt); /* packet after added to the flow */
-    txhandler_dispatch_stream(&stp); // uses lock
-  }
-  else{
-    list_for_each_entry(pm, pipeline_get_pms(flow->pipeline, 0), list){
-      //printk(KERN_DEBUG "flow_append_packet(): sending wakeup signal to PM %s\n", pm->kmod->name);
-      spin_lock_bh(&pm->tail_lock);
-      streamp_set_packet(&pm->tail, pkt); /* update PM's tail pointer */
-      spin_unlock_bh(&pm->tail_lock);      
-      //BUG_ON(pkt->seq <= pkt->prev->seq);      
-      if(pm->thread->state != TASK_RUNNING) {
-        wake_up_process(pm->thread);        /* notify the PM */
-      }
-    }
+void flow_append_packet(flow_t flow, packet_t pkt) {
+  task_t task;
+  streamp_t stp;
+  rte_spinlock_lock(&flow->lock);
+  TAILQ_INSERT_BEFORE(&flow->head, pkt->list);
+  flow->size++;
+  rte_spinlock_unlock(&flow->lock);
+  /* No PM to process the flow, send out */
+  TAILQ_FOREACH(task, pipeline_get_pms(flow->pipeline, 0), list){
+    channnel_insert(task->rxChannel, pkt); 
+    if (task_is_runnable(task)) scheduler_submit(task);  
   }
 }
 
 /* dequeue packet from the flow and return its value */
-struct packet *flow_remove_packet(struct flow *flow)
-{
-  struct packet *pkt;
-  //  smp_mb();
-  if(atomic_read(&flow->size) == 0){    
-    printk(KERN_INFO "flow_remove_packet(): flow is empty\n");
+packet_t flow_remove_packet(flow_t flow) {
+  packet_t pkt;
+  rte_spinlock_lock(&flow->lock);
+  if (TAILQ_EMPTY(&flow-head)) {
+    rte_spinlock_unlock(&flow->lock);
+    print("flow_remove_packet(): flow is empty\n");
     return NULL;
   }
-  //spin_lock(&flow->head_lock);
-  pkt = flow->head;  
-  //smp_wmb();
-  flow->head = flow->head->next;
-  if(! is_tcp_flow(flow))
-    atomic_dec(&flow->size);
-  //spin_unlock(&flow->head_lock);  
- 
+  rte_spinlock_lock(&flow->lock);
+  pkt = TAILQ_REMOVE(&flow->head);
+  rte_spinlock_unlock(&flow->lock);    
   return pkt;
 }
 
-/* Remove a flow 
- * TODO: consider the inconsistency of existing packets 
- * in the flow...
- * Detach processing modules from the flow
- * Delete packets in the flow -- free packets list
- * Remove processing modules that are not used by other 
- * flows -- decrement pcount
- * Free procs list 
- */
-void flow_delete(struct flow *flow)
-{
-  struct packet *packet;
-  if (flow == NULL) return;
-  /* remove flow from rxdev list */
-  flowos_del_rxdev(flow);
-  /* if flow list is empty for dev, unregister RX handler */
-  if (! is_rx_handler_registered(flow->idev))
-    flowos_unregister_rx_handler(flow->idev);
+/* Remove a flow */
+void flow_delete(flow_t flow) {
+  packet_t packet;
+  assert(flow);
   /* Free packets -- 
    * FIXME: consider a packet is shared by several flows...
    * Assumption: packet 1-to-1 flow relation 
    */
+  rte_spinlock_lock(&flow->lock);
   pipeline_delete(flow->pipeline);
-  
-  if (is_tcp_flow(flow) && flow->tcb_out != NULL) 
-    mtcp_shutdown_tcb(flow->tcb_out);
   /* delete any remaining packets in the flow */  
-    while (flow->head != flow->tail){
-    printk(KERN_INFO "flow_delete(): flow is not empty\n");
-     packet = flow->head;
-     flow->head = flow->head->next;
-     if (packet->skb) consume_skb(packet->skb);
-     packet_delete(packet);
-   }
-    /* free the dummy node */
-  if (flow->tail) packet_delete(flow->tail);
-  kfree(flow);  
+  while (! TAILQ_EMPTY(&flow->head)) {
+    printf("flow_delete(): flow is not empty\n");
+    packet = TAILQ_REMOVE(&flow->head);
+    packet_delete(packet);
+  }
+  rte_spinlock_unlock(&flow->lock);
+  flowos_remove_flow(&flowos.flow_list, flow);
 }
 
-void flow_set_protocols(struct flow *flow, char *protos)
-{
-  u8 count;
+void flow_set_protocols(flow_t flow, char *protocols) {
+  uint8_t count = 0;
   char *ptr, *temp;
-  count = 0;
-  temp = kstrdup(protos, GFP_ATOMIC);
+  /* TODO: keep protocol IDs instead of names */
+  temp = strdup(protocols);
   ptr = strsep(&temp, ":");
-  while(ptr){
-    flow->protocols[count++] = kstrdup(ptr, GFP_ATOMIC);
+  while (ptr) {
+    flow->protocols[count++] = strdup(ptr);
     ptr = strsep(&temp, ":");
   }
-  flow->num_protos = count;
+  flow->protocolCount = count;
 }
 
-int is_tcp_flow(struct flow *flow)
-{
+int is_tcp_flow(flow_t flow) {
   int i;
-  for(i = 0; i < flow->num_protos; i++){
-    if(strcasecmp(flow->protocols[i], "tcp") == 0)
+  for (i = 0; i < flow->num_protos; i++) {
+    if (strcasecmp(flow->protocols[i], "tcp") == 0)
       return 1;
   }
   return 0;
 }
 
-u8 flow_get_level(struct flow *flow, char *proto)
-{
-  u8 i;
-  for(i = 0; i < flow->num_protos; i++)
-    if(strcasecmp(flow->protocols[i], proto) == 0)
+int8_t flow_get_levelflow_t flow, char *protocol) {
+  int8_t i; 
+  for (i = 0; i < flow->protocolCount; i++)
+    if (strcasecmp(flow->protocols[i], protocol) == 0)
       return i;
-  return 0xff;
+  return -1; 
 }
 
-/* Add a processing module to a flow */
-int flow_attach_pm(struct flow *flow, struct module *kmod, u8 pos)
-{
+/* Add a processing task to a flow */
+int flow_attach_task(flow_t flow, task_t task, uint8_t pos) {
   char name[80];
-  struct flowos_pm *pm;
-  if(! flow || ! kmod){
-    printk(KERN_INFO "flow_attach_pm(): NULL pinter error\n");
-    return -1;
-  }
-  pm = pm_init(kmod, flow, pos);
-  if(! pm){
-    printk(KERN_INFO "flow_attach_pm(): Failed to initialize pm [%s]\n", 
-	   kmod->name);
-    return -1;
-  }
-  sprintf(name, "%s-%s", flow->name, kmod->name);
-  /* put a ref to the module to indicate that it is being used */
-  try_module_get(kmod); 
-  pipeline_add_pm(flow->pipeline, pm, pos);
-  /* create a thread of this module for this flow */
-  pm->thread = kthread_create((thread_fn)pm->process, pm, name);
+  task_t t;
+  assert (flow && task);
+  task_init(task, flow, pos);
+  sprintf(name, "%s.%s", flow->name, task->name);
+  pipeline_add_task(flow->pipeline, task, pos);
   return 0;
 }
 
-/* FIXME: remove PM, rebuild pipeline */
-int flow_detach_pm(char *flowname, char *modname)
-{
-  int stage;
-  struct flow *flow;
-  struct module *kmod;
-  struct flowos_pm *pm, *temp;
-  /* Lookup flow table for the flow */
-  flow = flowos_find_flow(flowname);
-  if(! flow){
-    printk(KERN_INFO "flow_detach_pm(): Flow [%s] does not exist...", 
-	   flowname);
-    return -1;
-  }
-  kmod = find_module(modname);
-  if(! kmod){
-    printk(KERN_INFO "flow_detach_pm(): PM [%s] does not exist...", modname);
-    return -1;
-  }
-  for(stage = 0; stage < pipeline_get_stages(flow->pipeline); stage++){
-    list_for_each_entry_safe(pm, temp, pipeline_get_pms(flow->pipeline, stage), list){
-      if(pm->kmod == kmod){
-	/* unlink the thread */
-	list_del(&pm->list);
-	/* decrement ref count */
-	module_put(pm->kmod);
-	if(module_refcount(pm->kmod) == 0){
-	  flowos_remove_pm(pm->kmod->name);
-	}
-	//pm_lock_heap(pm);
-	//pqueue_remove(pipeline_get_heap(flow->pipeline, stage), &pm->head);
-	//pm_unlock_heap(pm);	
-	pm_delete(pm);
-	return 0;
+flow_t flowos_classify_packet(struct rte_mbuf *mbuf) {
+  flow_t flow;
+  struct ethhdr *mach;
+  struct iphdr *iph;
+  struct tcphdr *tcph;
+  struct udphdr *udph;
+  uint16_t fields;
+
+  fields = 0;
+  /* FIXME: very naive linear search, 
+   * do some smart matching */
+  TAILQ_FOREACH (flow, &flowos.flow_list, list) {   
+    /* IP header always exists */
+    iph = (struct iphdr *)((struct ethhdr *) 
+			   rte_pktmbuf_mtod(pkt, struct ethhdr*) + 1);
+    /* IP source address and destination address */
+    if ((flow->id.fields & FLOWOS_IPv4_SRC) || (flow->id.fields & FLOWOS_IPv4_DST)) {
+      /* IPv4 source address */
+      if (flow->id.fields & FLOWOS_IPv4_SRC) {
+	if (flow->id.ip_src.s_addr != iph->saddr) continue;
+	else fields |= FLOWOS_IPv4_SRC;	
+      }
+      /* IPv4 destination address */
+      if (flow->id.fields & FLOWOS_IPv4_DST) {
+	if (flow->id.ip_dst.s_addr != iph->daddr) continue;
+	fields |= FLOWOS_IPv4_DST;
+      }
+    }    
+    /* TCP source and destination ports */
+    if ((flow->id.fields & FLOWOS_TCP_SRC) || (flow->id.fields & FLOWOS_TCP_DST)) {
+      if (iph->protocol == IPPROTO_TCP)
+	tcph = (struct tcphdr *) ((char *)iph + (iph->ihl << 2)); 
+      else continue;
+      /* TCP source port */
+      if (flow->id.fields & FLOWOS_TCP_SRC) {
+	if (flow->id.tp_src != tcph->source) continue;
+	fields |= FLOWOS_TCP_SRC;
+      }
+      /* TCP destination port */
+      if (flow->id.fields & FLOWOS_TCP_DST) {
+	if (flow->id.tp_dst != tcph->dest) continue;
+	fields |= FLOWOS_TCP_DST;
       }
     }
-  }
-  return -1;
+    /* UDP source and destination ports */
+    if ((flow->id.fields & FLOWOS_UDP_SRC) || (flow->id.fields & FLOWOS_UDP_DST)) {
+      if (iph->protocol == IPPROTO_UDP)
+	udph = (struct udphdr *) ((u_char *)iph + (iph->ihl << 2)); 
+      else continue;
+      /* UDP source port */
+      if (flow->id.fields & FLOWOS_UDP_SRC) {
+	if (flow->id.tp_src != udph->source) continue;
+	fields |= FLOWOS_UDP_SRC;
+      }
+      /* UDP destination port */
+      if (flow->id.fields & FLOWOS_UDP_DST) {
+	if (flow->id.tp_dst != udph->dest) continue;
+	fields |= FLOWOS_UDP_DST;
+      }
+    }
+    /* we have found the flow */
+    if (fields == flow->id.fields) return flow;
+  }  
+  /* No match found */
+  return NULL;
 }
 
+/* decode network buffer and create a packet for the flow */
+packet_t flowos_decode_mbuf(struct rte_mbuf *mbuf, flow_t flow) {
+  int i; 
+  char *prev; 
+  decoder_fn decoder; 
+  packet_t packet;
+  struct tcphdr *th;
+  struct udphdr *uh;
+  struct iphdr *ih = (struct iphdr *)
+    ((struct ethhdr *) rte_pktmbuf_mtod(pkt, struct ethhdr*) + 1);
+  /* TODO: check buffer is not scattered */
+  packet = packet_create(mbuf, flow->protocolCount + 1);
+  if (! packet) {
+    printf("flowos_decode_mbuf(): failed to allocate packet\n");
+    return NULL;
+  }
+  prev = NULL;
+  for (i = 0; i < flow->protocolCount; i++) {
+    decoder = flowos_find_decoder(flow->protocols[i]);
+    if (! decoder) {
+      printf("FlowOS: Protocol %s decoder not found\n", flow->protocols[i]);
+      packet_delete(packet);
+      return NULL;
+    }
+    packet->parray[i] = decoder(mbuf, prev);
+    prev = packet->parray[i];
+  }
+  /* pointer to the last byte of the packet */
+  packet->parray[flow->num_protos] = (char *)ih + ntohs(ih->tot_len);  
+
+  if (ih->protocol == IPPROTO_TCP) {
+    th = (struct tcphdr *)((u8 *)ih + (ih->ihl << 2));
+    packet->tseq = ntohl(th->seq);
+    packet->tack = ntohl(th->ack_seq);
+    packet->tlen = ntohs(ih->tot_len) - (ih->ihl << 2) - (th->doff << 2);
+  }
+  else if (ih->protocol == IPPROTO_UDP) {
+    uh = (struct udphdr *)((u8 *)ih + (ih->ihl << 2));
+    packet->tlen = ntohs(uh->len) - 8; //excluding header
+  }
+  return packet;
+}

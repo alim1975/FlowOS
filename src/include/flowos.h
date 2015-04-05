@@ -9,11 +9,10 @@
 #include <rte_malloc.h>
 #include <rte_mempool.h>
 
-#include "messageq.h"
-#include "pmodule.h"
+//#include "pmodule.h"
 #include "flow.h"
 #include "protocol.h"
-#include "cmdline.h"
+//#include "cmdline.h"
 #include "dpdk.h"
 
 #define HZ		1000
@@ -76,19 +75,6 @@ struct arp_table {
   int entries;
 };
 
-struct rxdev {
-  TAILQ_ENTRY(rxdev) list; 
-  flow_head_t flows;
-  struct rte_eth_dev *dev;
-};
-
-typedef TAILQ_HEAD(, rxdev) rxdev_head_t;
-
-struct flowdev {
-  TAILQ_ENTRY(flowdev) list;
-  struct flow *flow;
-};
-
 struct flowos_config {
   /* network interface config */
   int eths_num;                 /* # of interfaces */
@@ -113,17 +99,11 @@ struct flowos_config {
 
 /* the main data structure of FlowOS */
 struct flowos {
+  int done;
   /* list of flows */
-  flow_head_t flow_list;
-  /* list of processing modules */
-  pmodule_list_t module_list;
+  TAILQ_HEAD(, flow) flow_list;  
   /* list of decoders */
-  decoder_list_t decoder_list;
-  /* list of rx handlers */
-  rxdev_head_t rxdev_list;
-  /** flowos statistics 
-   *  TODO: define a data structure for this 
-   */
+  TAILQ_HEAD(, decoder) decoder_list;
   unsigned long pktprocessed;
   unsigned long pktdropped;
 
@@ -139,7 +119,6 @@ struct flowos {
   struct rte_mempool *rx_pool;
   struct rte_mempool *tx_pool;
 };
-
 typedef struct flowos* flowos_t;
 
 struct flowos flowos;
@@ -148,16 +127,13 @@ struct flowos_config CONFIG;
 extern int          udp_encap_init(void);
 extern void         udp_encap_close(void);
 
-extern int          txhandler_init(void);
-extern void         txhandler_close(void);
+/* int                 flowos_xmit_mbuf(struct flow *flow, struct rte_mbuf *mbuf); */
+/* extern int          flowos_send_message(struct flowos_msghdr *); */
+/* extern int          flowos_send_response(const struct flowos_msghdr *, uint8_t, char *, size_t); */
 
-int                 flowos_xmit_mbuf(struct flow *flow, struct rte_mbuf *mbuf);
-extern int          flowos_send_message(struct flowos_msghdr *);
-extern int          flowos_send_response(const struct flowos_msghdr *, uint8_t, char *, size_t);
-
-void                flowos_release_data(struct flowos_pm *pm, struct streamp *tail);
+/* void                flowos_release_data(struct flowos_pm *pm, struct streamp *tail); */
  
-void                flowos_release_packet(struct flowos_pm *thread, struct packet *pkt);
+/* void                flowos_release_packet(struct flowos_pm *thread, struct packet *pkt); */
 
 int                 is_flow_table_empty(void);
 #endif

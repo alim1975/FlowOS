@@ -19,6 +19,8 @@
 
 #include "flowos.h"
 
+#include "arp.h"
+
 #ifdef RTE_EXEC_ENV_BAREMETAL
 #define MAIN _main
 #else
@@ -118,8 +120,6 @@ static void flowos_config_devices() {
   /* attaching (device, queue) */
   for (i = 0; i < flowos.attached_device_count; i++) {
     ifidx = flowos.attached_devices[i];
-    //if (flowos.attached_devices[flowos.devices[i]].num_rx_queues <= ctx->cpu)
-    //  continue;  
     ret = rte_eth_dev_configure(ifidx, NB_RX_QUEUE, NB_TX_QUEUE, &eth_conf);
     if (ret < 0) {
       rte_exit(EXIT_FAILURE, "FlowOS: failed to configure device: eth%d\n", ifidx);
@@ -212,6 +212,16 @@ int flowos_set_device_info() {
   return 0;
 }
 
+int flowos_xmit_packets() {
+  /*  for (int i = 0; i < flowos.attached_device_count; i++) {
+    int idx = flowos.attached_devices[i];
+    if (tx_queue[idx]) {
+      //tx_burst...
+    }
+  } 
+  */
+}
+
 int MAIN(int argc, char **argv) {
   int i, j, ret, recv_cnt, ifidx = 0;
   struct timeval cur_ts;
@@ -230,8 +240,11 @@ int MAIN(int argc, char **argv) {
   flowos_config_routing_table();
   /* Start TCP thread */
   //flowos_start_tcp();
+  /* Init task scheduler */
+  task_pool_create(1024);
+  scheduler_init(2);
   /* main loop: process packets */
-  while (1) {
+  while (! flowos.done) {
     //STAT_COUNT(flowos.runstat.rounds);
     recv_cnt = 0;
     gettimeofday(&cur_ts, NULL);
@@ -251,14 +264,16 @@ int MAIN(int argc, char **argv) {
 	}
       }
       for (j = 0; j < recv_cnt; j++) {
-	//printf("Process packet %d\n", i);
-	// flowos_process_packet(flowos, idx, ts, rx_mbufs[i]);
-	rte_pktmbuf_free(rx_mbufs[j]);
+	printf("Process packet %d\n", i);
+	ret = flowos_process_packet(flowos, idx, ts, rx_mbufs[i]);	
+	if (ret == FALSE) {
+	  printf("FlowOS process_packet failed.\n");	  
+	}
       }
       //if (recv_cnt > 0) STAT_COUNT(flowos.runstat.rounds_rx);
     }
-    // Send out packets waiting at TX queue
-    // flowos_xmit_packets();
+    // Send out packets waiting at TX queues
+    flowos_xmit_packets();
   } 
   return 0;
 }

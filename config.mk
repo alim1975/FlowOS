@@ -1,4 +1,4 @@
-AM_CFLAGS = -pg -O2 -I$(top_srcdir)/libs/mtcp/src/include -include $(top_srcdir)/libs/dpdk/build/include/rte_config.h \
+AM_CFLAGS = -pg -O2 -include $(top_srcdir)/libs/dpdk/build/include/rte_config.h \
   -I$(top_srcdir)/libs/dpdk/build/include -I$(top_srcdir)/src/include
 
 AM_LDFLAGS = \
