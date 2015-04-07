@@ -2,23 +2,26 @@
 #include <linux/udp.h>
 #include <netinet/in.h>
 #include <string.h>
+#include <assert.h>
 
 #include <rte_mempool.h>
 #include <rte_ether.h>
 
 #include "protocol.h"
 #include "flow.h"
+#include "flowos.h"
 
-static rte_mempool *flow_pool = NULL;
+static struct rte_mempool *flow_pool = NULL;
+
 int flow_pool_init(uint32_t size) {
   flow_pool = rte_mempool_create("flow_pool", 
-				 size,
-				 sizeof(struct flow),
-				 0, 0, 
-				 NULL, NULL, NULL, NULL,
-				 0, 0);
+																 size,
+																 sizeof(struct flow),
+																 0, 0, 
+																 NULL, NULL, NULL, NULL,
+																 0, 0);
   if (! flow_pool) {
-    printf("FlowoS failed to create flow pool.\n");
+    printf("FlowOS failed to create flow pool.\n");
     return -1;
   }
   return 0;
@@ -27,7 +30,7 @@ int flow_pool_init(uint32_t size) {
 /* Create a new flow */
 flow_t flow_create(flowid_t id, char *name) {
   flow_t flow;
-  if ( rte_mempool_get(flow_pool, &flow) != 0) {
+  if ( rte_mempool_get(flow_pool, (void**)&flow) != 0) {
     printf("flow_create() failed to create flow entry.\n");
     return NULL;
   }
@@ -42,22 +45,20 @@ flow_t flow_create(flowid_t id, char *name) {
   TAILQ_INIT(&flow->head);
   rte_spinlock_init(&flow->lock);
   /* append the flow to the flow list */
-  flowos_insert_flow(&flowos.flow_list, flow);
+  flowos_insert_flow(flow);
   return flow;
 }
 
 /* enqueue the packet to the tail */
 void flow_append_packet(flow_t flow, packet_t pkt) {
   task_t task;
-  streamp_t stp;
   rte_spinlock_lock(&flow->lock);
-  TAILQ_INSERT_BEFORE(&flow->head, pkt->list);
+  TAILQ_INSERT_TAIL(&flow->head, pkt, list);
   flow->size++;
   rte_spinlock_unlock(&flow->lock);
   /* No PM to process the flow, send out */
-  TAILQ_FOREACH(task, pipeline_get_pms(flow->pipeline, 0), list){
-    channnel_insert(task->rxChannel, pkt); 
-    if (task_is_runnable(task)) scheduler_submit(task);  
+  TAILQ_FOREACH(task, pipeline_get_pms(flow->pipeline, 0), list) {
+    if (task_is_runnable(task)) scheduler_submit(task);
   }
 }
 
@@ -65,13 +66,13 @@ void flow_append_packet(flow_t flow, packet_t pkt) {
 packet_t flow_remove_packet(flow_t flow) {
   packet_t pkt;
   rte_spinlock_lock(&flow->lock);
-  if (TAILQ_EMPTY(&flow-head)) {
+  if (TAILQ_EMPTY(&flow->head)) {
     rte_spinlock_unlock(&flow->lock);
-    print("flow_remove_packet(): flow is empty\n");
+    printf("flow_remove_packet(): flow is empty\n");
     return NULL;
   }
-  rte_spinlock_lock(&flow->lock);
-  pkt = TAILQ_REMOVE(&flow->head);
+  TAILQ_REMOVE(&flow->head, pkt, list);
+	flow->size--;
   rte_spinlock_unlock(&flow->lock);    
   return pkt;
 }
@@ -89,11 +90,11 @@ void flow_delete(flow_t flow) {
   /* delete any remaining packets in the flow */  
   while (! TAILQ_EMPTY(&flow->head)) {
     printf("flow_delete(): flow is not empty\n");
-    packet = TAILQ_REMOVE(&flow->head);
+    TAILQ_REMOVE(&flow->head, packet, list);
     packet_delete(packet);
   }
   rte_spinlock_unlock(&flow->lock);
-  flowos_remove_flow(&flowos.flow_list, flow);
+  flowos_remove_flow(flow);
 }
 
 void flow_set_protocols(flow_t flow, char *protocols) {
@@ -111,14 +112,14 @@ void flow_set_protocols(flow_t flow, char *protocols) {
 
 int is_tcp_flow(flow_t flow) {
   int i;
-  for (i = 0; i < flow->num_protos; i++) {
+  for (i = 0; i < flow->protocolCount; i++) {
     if (strcasecmp(flow->protocols[i], "tcp") == 0)
       return 1;
   }
   return 0;
 }
 
-int8_t flow_get_levelflow_t flow, char *protocol) {
+int8_t flow_get_level(flow_t flow, char *protocol) {
   int8_t i; 
   for (i = 0; i < flow->protocolCount; i++)
     if (strcasecmp(flow->protocols[i], protocol) == 0)
@@ -131,7 +132,7 @@ int flow_attach_task(flow_t flow, task_t task, uint8_t pos) {
   char name[80];
   task_t t;
   assert (flow && task);
-  task_init(task, flow, pos);
+	//  task_init(task, flow, pos);
   sprintf(name, "%s.%s", flow->name, task->name);
   pipeline_add_task(flow->pipeline, task, pos);
   return 0;
@@ -150,51 +151,50 @@ flow_t flowos_classify_packet(struct rte_mbuf *mbuf) {
    * do some smart matching */
   TAILQ_FOREACH (flow, &flowos.flow_list, list) {   
     /* IP header always exists */
-    iph = (struct iphdr *)((struct ethhdr *) 
-			   rte_pktmbuf_mtod(pkt, struct ethhdr*) + 1);
+    iph = (struct iphdr *)((char *) rte_pktmbuf_mtod(mbuf, char *) + sizeof(struct ether_hdr));
     /* IP source address and destination address */
     if ((flow->id.fields & FLOWOS_IPv4_SRC) || (flow->id.fields & FLOWOS_IPv4_DST)) {
       /* IPv4 source address */
       if (flow->id.fields & FLOWOS_IPv4_SRC) {
-	if (flow->id.ip_src.s_addr != iph->saddr) continue;
-	else fields |= FLOWOS_IPv4_SRC;	
+				if (flow->id.ip_src.s_addr != iph->saddr) continue;
+				else fields |= FLOWOS_IPv4_SRC;	
       }
       /* IPv4 destination address */
       if (flow->id.fields & FLOWOS_IPv4_DST) {
-	if (flow->id.ip_dst.s_addr != iph->daddr) continue;
-	fields |= FLOWOS_IPv4_DST;
+				if (flow->id.ip_dst.s_addr != iph->daddr) continue;
+				fields |= FLOWOS_IPv4_DST;
       }
     }    
     /* TCP source and destination ports */
     if ((flow->id.fields & FLOWOS_TCP_SRC) || (flow->id.fields & FLOWOS_TCP_DST)) {
       if (iph->protocol == IPPROTO_TCP)
-	tcph = (struct tcphdr *) ((char *)iph + (iph->ihl << 2)); 
+				tcph = (struct tcphdr *) ((char *)iph + (iph->ihl << 2)); 
       else continue;
       /* TCP source port */
       if (flow->id.fields & FLOWOS_TCP_SRC) {
-	if (flow->id.tp_src != tcph->source) continue;
-	fields |= FLOWOS_TCP_SRC;
+				if (flow->id.tp_src != tcph->source) continue;
+				fields |= FLOWOS_TCP_SRC;
       }
       /* TCP destination port */
       if (flow->id.fields & FLOWOS_TCP_DST) {
-	if (flow->id.tp_dst != tcph->dest) continue;
-	fields |= FLOWOS_TCP_DST;
+				if (flow->id.tp_dst != tcph->dest) continue;
+				fields |= FLOWOS_TCP_DST;
       }
     }
     /* UDP source and destination ports */
     if ((flow->id.fields & FLOWOS_UDP_SRC) || (flow->id.fields & FLOWOS_UDP_DST)) {
       if (iph->protocol == IPPROTO_UDP)
-	udph = (struct udphdr *) ((u_char *)iph + (iph->ihl << 2)); 
+				udph = (struct udphdr *) ((u_char *)iph + (iph->ihl << 2)); 
       else continue;
       /* UDP source port */
       if (flow->id.fields & FLOWOS_UDP_SRC) {
-	if (flow->id.tp_src != udph->source) continue;
-	fields |= FLOWOS_UDP_SRC;
+				if (flow->id.tp_src != udph->source) continue;
+				fields |= FLOWOS_UDP_SRC;
       }
       /* UDP destination port */
       if (flow->id.fields & FLOWOS_UDP_DST) {
-	if (flow->id.tp_dst != udph->dest) continue;
-	fields |= FLOWOS_UDP_DST;
+				if (flow->id.tp_dst != udph->dest) continue;
+				fields |= FLOWOS_UDP_DST;
       }
     }
     /* we have found the flow */
@@ -208,12 +208,11 @@ flow_t flowos_classify_packet(struct rte_mbuf *mbuf) {
 packet_t flowos_decode_mbuf(struct rte_mbuf *mbuf, flow_t flow) {
   int i; 
   char *prev; 
-  decoder_fn decoder; 
+  decoder_t decoder; 
   packet_t packet;
   struct tcphdr *th;
   struct udphdr *uh;
-  struct iphdr *ih = (struct iphdr *)
-    ((struct ethhdr *) rte_pktmbuf_mtod(pkt, struct ethhdr*) + 1);
+  struct iphdr *ih = (struct iphdr *) ((char *) rte_pktmbuf_mtod(mbuf, char *) + sizeof(struct ether_hdr));
   /* TODO: check buffer is not scattered */
   packet = packet_create(mbuf, flow->protocolCount + 1);
   if (! packet) {
@@ -228,20 +227,20 @@ packet_t flowos_decode_mbuf(struct rte_mbuf *mbuf, flow_t flow) {
       packet_delete(packet);
       return NULL;
     }
-    packet->parray[i] = decoder(mbuf, prev);
+    packet->parray[i] = decoder->decode(mbuf, prev);
     prev = packet->parray[i];
   }
   /* pointer to the last byte of the packet */
-  packet->parray[flow->num_protos] = (char *)ih + ntohs(ih->tot_len);  
+  packet->parray[flow->protocolCount] = (char *)ih + ntohs(ih->tot_len);  
 
   if (ih->protocol == IPPROTO_TCP) {
-    th = (struct tcphdr *)((u8 *)ih + (ih->ihl << 2));
+    th = (struct tcphdr *)((uint8_t *)ih + (ih->ihl << 2));
     packet->tseq = ntohl(th->seq);
     packet->tack = ntohl(th->ack_seq);
     packet->tlen = ntohs(ih->tot_len) - (ih->ihl << 2) - (th->doff << 2);
   }
   else if (ih->protocol == IPPROTO_UDP) {
-    uh = (struct udphdr *)((u8 *)ih + (ih->ihl << 2));
+    uh = (struct udphdr *)((uint8_t *)ih + (ih->ihl << 2));
     packet->tlen = ntohs(uh->len) - 8; //excluding header
   }
   return packet;

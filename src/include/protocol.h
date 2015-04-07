@@ -1,7 +1,9 @@
-#ifndef __PROTOCOL_H__
-#define __PROTOCOL_H__
+#ifndef __PROTOCOL__
+#define __PROTOCOL__
 
 #include <netinet/ip.h>
+#include <sys/queue.h>
+
 #include <rte_mbuf.h>
 
 /* protocol types */
@@ -26,21 +28,16 @@ typedef char* string_t;
 
 struct decoder {
   char protocol[12];
-  decoder_fn decoder;
+  decoder_fn decode;
   TAILQ_ENTRY(decoder) list;
 };
 typedef struct decoder* decoder_t;
 
-void register_decoder(decoder_t pdecoders,
-		      decoder_fn decoder, 
-		      string_t protocol);
+void flowos_register_decoder(decoder_fn decoder, string_t protocol);
 
-void unregister_decoder(decoder_t pdecoders,
-			string_t protocol);
+void flowos_unregister_decoder(string_t protocol);
 
-decoder_fn 
-find_protocol_decoder(decoder_t pdecoders,
-		      string_t protocol);
+decoder_t flowos_find_decoder(string_t protocol);
 
 uint32_t map_port_to_protocol(int sport, int dport);
 
@@ -55,7 +52,7 @@ string_t tcp_decoder(struct rte_mbuf *mbuf, string_t prev);
 string_t udp_decoder(struct rte_mbuf *mbuf, string_t prev);
 
 uint16_t compute_tcpudp_checksum(struct iphdr *iph, 
-				   char*  payload,
-				   string_t protocol);
+																 unsigned char *payload,
+																 uint8_t protocol);
 
-#endif /*__PROTOCOL_H__*/
+#endif /*__PROTOCOL__*/

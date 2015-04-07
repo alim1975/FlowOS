@@ -11,10 +11,11 @@
 static struct rte_mempool *task_pool = NULL;
 static rte_atomic32_t TASKID;
 
-static void task_init(task_t task, task_fn proc, void *data, uint8_t rxCount, uint8_t txCount) {
+static void task_init(task_t task, task_fn proc, char *name, void *data, uint8_t rxCount, uint8_t txCount) {
   uint32_t i;
   uint32_t mark;
   task->id = rte_atomic32_add_return(&TASKID, 1);
+	strcpy(task->name, name);
   assert(rxCount + txCount <= 2 * MAX_CHANNELS);
   task->run = proc;
   task->data = data;
@@ -167,13 +168,13 @@ void task_pool_destroy() {
   task_pool = NULL;
 }
 
-task_t task_create(task_fn proc, void *data, uint8_t rxCount, uint8_t txCount) {
+task_t task_create(task_fn proc, char *name, void *data, uint8_t rxCount, uint8_t txCount) {
   task_t task;
   if (rte_mempool_mc_get(task_pool, (void**)&task) !=0) {
     printf("task_create(): failed to create a new task.\n");
     return NULL;
   }
-  task_init(task, proc, data, rxCount, txCount);
+  task_init(task, proc, name, data, rxCount, txCount);
   return task;
 }
 

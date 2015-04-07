@@ -1,8 +1,8 @@
 #include <stdio.h>
+#include <assert.h>
 
 #include <rte_malloc.h>
 
-#include "pmodule.h"
 #include "pipeline.h"
 #include "task.h"
 
@@ -18,67 +18,67 @@
 */
 struct pipeline *pipeline_create(int stages) {
   int i;
-  assert(stages < MAX_PIPE);
-  struct pipeline *p = rte_malloc("pipeline", sizeof(struct pipeline), 0);
-  if (p == NULL) {
-    print("pipeline_create(): Unable to allocate "
-	   "memory for pipeline\n");
+  assert(stages < MAX_PIPELINE);
+  pipeline_t pipe = rte_malloc("pipeline", sizeof(struct pipeline), 0);
+  if (pipe == NULL) {
+    printf("pipeline_create(): Unable to allocate "
+					"memory for pipeline\n");
     return NULL;
   }
-  p->stages = stages;
+  pipe->stages = stages;
   for (i = 0; i < stages; i++)
-    TAILQ_INIT(&p->pms[i]);
+    TAILQ_INIT(&pipe->tasks[i]);
   
-  return p;
+  return pipe;
 }
 
 /* Remove a processing pipeline from a flow. */
-void pipeline_delete(struct pipeline *p) {
+void pipeline_delete(pipeline_t pipe) {
   int stage;
-  struct flowos_pm *pm, *temp;
-  if (p == NULL) return;
-  for (stage = 0; stage < p->stages; stage++) {
-    /* delete PMs */
-    for (pm = TAILQ_FIRST(&p->pms[stage]); pm != NULL; pm = temp) { 
-      temp = TAILQ_NEXT(pm, list);
+  task_t task, temp;
+  assert(pipe != NULL);
+  for (stage = 0; stage < pipe->stages; stage++) {
+    /* delete tasks */
+    for (task = TAILQ_FIRST(&pipe->tasks[stage]); task != NULL; task = temp) { 
+      temp = TAILQ_NEXT(task, list);
       /* decrement ref count */
-      TAILQ_REMOVE(&p->pms[stage], pm, list);
-      task_put(pm->task);
-      if (task_refcount(pm->task) == 0) {
-	flowos_remove_pm(pm->task->name);
-      }
-      pm_delete(pm);
+      TAILQ_REMOVE(&pipe->tasks[stage], task, list);
+      //task_put(task);
+      //if (task_refcount(task) == 0) {
+			//	flowos_remove_task(task->name);
+      //}
+      task_destroy(task);
     }    
   } 
 }
 
-/* Insert a processing module (pm) into 
-   a processing pipeline (p) at position (pos). */
-void pipeline_add_pm(struct pipeline *p, struct flowos_pm *pm, uint8_t pos) {
-  if (p == NULL || p->stages == 0) {
-    printf("pipeline_add_pm(): pipeline is empty...\n");
+/* Insert a processing task into 
+   a processing pipeline at a given position. */
+void pipeline_add_task(pipeline_t pipe, task_t task, uint8_t pos) {
+  if (pipe == NULL || pipe->stages == 0) {
+    printf("pipeline_add_task(): pipeline is empty...\n");
     return;
   }
-  if (! pm) {
-    printf("pipeline_add_pm(): pm is NULL\n");
+  if (! task) {
+    printf("pipeline_add_task(): task is NULL\n");
     return;
   }
 
-  if (p->stages <= pos) {
-    printf("pipeline_add_pm(): invalid position %d setting 0\n", p->stages);
+  if (pipe->stages <= pos) {
+    printf("pipeline_add_task(): invalid position %d setting 0\n", pipe->stages);
     pos = 0;
   }
   /* add this PM to the list of PMs at this level */
-  TAILQ_INSERT_TAIL(&p->pms[pos], pm, list);
+  TAILQ_INSERT_TAIL(&pipe->tasks[pos], task, list);
 }
 
-struct flowos_pm *pipeline_find_pm(struct pipeline *p, const char *name) {
+task_t pipeline_find_task(pipeline_t pipe, const char *name) {
   int i;
-  struct flowos_pm *pm;
-  for (i = 0; i < p->stages; i++) {
-    TAILQ_FOREACH (pm, &p->pms[i], list) {
-      if (strcmp(pm->task->name, name) == 0)
-	return pm;
+  task_t task;
+  for (i = 0; i < pipe->stages; i++) {
+    TAILQ_FOREACH (task, &pipe->tasks[i], list) {
+      if (strcmp(task->name, name) == 0)
+				return task;
     }
   }
   return NULL;

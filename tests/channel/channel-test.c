@@ -34,9 +34,9 @@ int MAIN(int argc, char **argv) {
   pData.count = 10000;
   cData.count = 0;
 
-  task_t pt = task_create(producer_run, &pData, 0, 1);
+  task_t pt = task_create(producer_run, "Producer", &pData, 0, 1);
   printf("Creating consumer task...\n");
-  task_t ct = task_create(consumer_run, &cData, 1, 0);
+  task_t ct = task_create(consumer_run, "Consumer", &cData, 1, 0);
   assert(task_connect(pt, ct) == 0);
   printf("Connecting producer -> consumer...\n");
   channel_t ch = pt->txChannels[0];
@@ -46,8 +46,7 @@ int MAIN(int argc, char **argv) {
   printf("Starting producer task, hit any key to exit\n");
   scheduler_submit(pt);
   getchar();
-  printf("Producer count %u consumer %u\n",
-	 pData.bufferCount, cData.count);
+  printf("Producer count %u consumer %u\n", pData.bufferCount, cData.count);
   task_destroy(pt);
   task_destroy(ct);
   

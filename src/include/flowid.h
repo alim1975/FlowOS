@@ -1,5 +1,5 @@
-#ifndef __FLOWID_H__
-#define __FLOWID_H__
+#ifndef __FLOWID__
+#define __FLOWID__
 
 #include <stdint.h>
 #include <netinet/in.h>
@@ -26,4 +26,4 @@ struct flowid {
   uint16_t tp_dst;           /* TCP/UDP destination port */
 };
 typedef struct flowid* flowid_t;
-#endif /* __FLOWID_H__ */
+#endif /* __FLOWID__ */

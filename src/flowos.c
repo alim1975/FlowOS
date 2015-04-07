@@ -16,6 +16,7 @@
 #include <rte_ring.h>
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
+#include <rte_ether.h>
 
 #include "flowos.h"
 
@@ -81,31 +82,32 @@ static void flowos_init_dpdk(int argc, char **argv) {
   int ret = rte_eal_init(argc, argv);
   if (ret < 0) rte_panic("FlowOS: failed to initialize DPDK\n");
 
+	flowos.cpu_count = rte_lcore_count();
+
   flowos.device_count = rte_eth_dev_count();
   if (flowos.device_count <= 0) 
     rte_exit(EXIT_FAILURE, "FlowOS: no DPDK enabled interface found\n");
 
-  printf("FlowOS: found %d DPDK enabled NIC ports.\n", 
-	 flowos.device_count);
+  printf("FlowOS: found %d DPDK enabled NIC ports.\n", flowos.device_count);
   /* init RX/TX buffer pools */
   unsigned cpu = rte_lcore_id();
   unsigned socketid = rte_lcore_to_socket_id(cpu);
   flowos.rx_pool = 
     rte_mempool_create("rx_pool", POOL_SIZE * flowos.device_count, 
-		       MAX_PKT_SIZE, CACHE_SIZE,
-		       sizeof (struct rte_pktmbuf_pool_private),
-		       rte_pktmbuf_pool_init, NULL,
-		       rte_pktmbuf_init, NULL, socketid, 0);
+											 MAX_PKT_SIZE, CACHE_SIZE,
+											 sizeof (struct rte_pktmbuf_pool_private),
+											 rte_pktmbuf_pool_init, NULL,
+											 rte_pktmbuf_init, NULL, socketid, 0);
   if (flowos.rx_pool == NULL) {
     rte_exit(EXIT_FAILURE, "FlowOS: failed to create RX buffer pool.\n");
   }
-
+	
   flowos.tx_pool = 
     rte_mempool_create("tx_pool", POOL_SIZE * flowos.device_count,
-		       MAX_PKT_SIZE, CACHE_SIZE,
-		       sizeof (struct rte_pktmbuf_pool_private),
-		       rte_pktmbuf_pool_init, NULL,
-		       rte_pktmbuf_init, NULL, socketid, 0);
+											 MAX_PKT_SIZE, CACHE_SIZE,
+											 sizeof (struct rte_pktmbuf_pool_private),
+											 rte_pktmbuf_pool_init, NULL,
+											 rte_pktmbuf_init, NULL, socketid, 0);
   if (flowos.tx_pool == NULL) {
     rte_exit(EXIT_FAILURE, "FlowOS: failed to create TX buffer pool.\n");
   }
@@ -117,36 +119,46 @@ static void flowos_config_devices() {
   /* struct rte_eth_conf eth_conf; */
   unsigned cpu = rte_lcore_id();
   unsigned socketid = rte_lcore_to_socket_id(cpu);
+	// Retrieve interface information from DPDK
+	flowos_set_device_info();
+	// Configure IP addresses
+	flowos_config_interfaces("config/interfaces");
+	flowos_print_interface_info();
+
   /* attaching (device, queue) */
-  for (i = 0; i < flowos.attached_device_count; i++) {
-    ifidx = flowos.attached_devices[i];
-    ret = rte_eth_dev_configure(ifidx, NB_RX_QUEUE, NB_TX_QUEUE, &eth_conf);
-    if (ret < 0) {
-      rte_exit(EXIT_FAILURE, "FlowOS: failed to configure device: eth%d\n", ifidx);
-    }
-    /* TODO: uses constatnt RX/TX ring descriptors, assumes devices use only one queue = 0 */ 
-    ret = rte_eth_tx_queue_setup(ifidx, 0, NB_TX_DESC, socketid, &tx_conf);
-    if (ret < 0) {
-      rte_exit(EXIT_FAILURE, "FlowOS failed to setup TX queue for eth%d\n", ifidx);
-    }
-    //printf("If %d rte_eth_tx_queue_setup() successful\n", ifidx);
-    ret = rte_eth_rx_queue_setup(ifidx, 0, NB_RX_DESC, socketid, &rx_conf, flowos.rx_pool);
-    if (ret < 0) {
-      rte_exit(EXIT_FAILURE, "FlowOS failed to setup RX queue for eth%d\n", ifidx);
-    }
-    //printf("If %d rte_eth_rx_queue_setup() successful\n", ifidx);
-    ret = rte_eth_dev_start(ifidx);
-    if (ret < 0) {
-      rte_exit(EXIT_FAILURE, "FlowOS failed to start eth%d\n", ifidx);
-    }
-    //printf("If %d rte_eth_dev_start() successful\n", ifidx);
-    rte_eth_link_get(ifidx, &link);
-    if (link.link_status == 0) {
-      rte_exit(EXIT_FAILURE, "DPDK interface is down: %d\n", ifidx);
-    }
-    printf("Interface %d is UP and RUNNING\n", ifidx);
-    rte_eth_promiscuous_enable(ifidx);
-  }
+  for (i = 0; i < flowos.device_count; i++) {
+		if (flowos.devices[i].configured) {
+			ret = rte_eth_dev_configure(i, NB_RX_QUEUE, NB_TX_QUEUE, &eth_conf);
+			if (ret < 0) {
+				rte_exit(EXIT_FAILURE, "FlowOS: failed to configure device: eth%d\n", i);
+			}
+			/* TODO: uses constatnt RX/TX ring descriptors, assumes devices use only one queue = 0 */ 
+			ret = rte_eth_tx_queue_setup(i, 0, NB_TX_DESC, socketid, &tx_conf);
+			if (ret < 0) {
+				rte_exit(EXIT_FAILURE, "FlowOS failed to setup TX queue for eth%d\n", i);
+			}
+			//printf("If %d rte_eth_tx_queue_setup() successful\n", ifidx);
+			ret = rte_eth_rx_queue_setup(i, 0, NB_RX_DESC, socketid, &rx_conf, flowos.rx_pool);
+			if (ret < 0) {
+				rte_exit(EXIT_FAILURE, "FlowOS failed to setup RX queue for eth%d\n", i);
+			}
+			//printf("If %d rte_eth_rx_queue_setup() successful\n", i);
+			ret = rte_eth_dev_start(i);
+			if (ret < 0) {
+				rte_exit(EXIT_FAILURE, "FlowOS failed to start eth%d\n", i);
+			}
+			//printf("If %d rte_eth_dev_start() successful\n", i);
+			rte_eth_link_get(i, &link);
+			if (link.link_status == 0) {
+				rte_exit(EXIT_FAILURE, "DPDK interface is down: %d\n", i);
+			}
+			printf("Interface eth%d is UP and RUNNING\n", i);
+			rte_eth_promiscuous_enable(i);
+		}
+		else {
+			printf("FlowOS: interface eth%d is not configured\n", i);
+		}
+	}
 }
 
 int flowos_set_device_info() {
@@ -156,47 +168,18 @@ int flowos_set_device_info() {
   int i, j;
   
   printf("FlowOS: loading interface setting\n");  
-  CONFIG.eths = (struct eth_table *) 
-    rte_calloc("eth_table", MAX_DEVICES, sizeof(struct eth_table), 0);
-  if (! CONFIG.eths) 
-    rte_exit(EXIT_FAILURE, "FlowOS: failed to create interface table\n");
-  
   for (i = 0; i < flowos.device_count; i++) {
     rte_eth_dev_info_get(i, &dev_info);
-    flowos.devices[i].ifindex = i; // port_id
-    flowos.devices[i].kifindex = dev_info.if_index; // Not sure 
-    printf("FlowOS: device index: %d\n", dev_info.if_index);
-    if (dev_info.if_index == 0) 
-      strcpy(flowos.devices[i].name, "eth0");
-    else
-      if_indextoname(dev_info.if_index, flowos.devices[i].name); 
-    printf("FlowOS: device name: %s\n", flowos.devices[i].name);
-    // Setting interface information
-    eidx = CONFIG.eths_num++;
+    flowos.devices[i].configured = 0; 
+    printf("FlowOS: device index: %d == i(%d)\n", dev_info.if_index, i);
     /* Name*/
-    strcpy(CONFIG.eths[eidx].dev_name, flowos.devices[i].name);
-    /* Index */
-    CONFIG.eths[eidx].ifindex = flowos.devices[i].ifindex;
-    /* IP address, make sure configuration file sets right IP address and netmask */
-    CONFIG.eths[eidx].ip_addr = flowos.devices[i].ip_addr;
-    /* Netmask */
-    CONFIG.eths[eidx].netmask = flowos.devices[i].netmask;
+    sprintf(flowos.devices[i].name, "eth%d", i);
     /* MAC address */
     rte_eth_macaddr_get(i, &mac_addr);
-    for (j = 0; j < ETH_ALEN; j ++) {
-      CONFIG.eths[eidx].haddr[j] = mac_addr.addr_bytes[j];
-      flowos.devices[i].dev_addr[j] = mac_addr.addr_bytes[j];
+    for (j = 0; j < ETH_ALEN; j++) {
+      flowos.devices[i].mac_addr[j] = mac_addr.addr_bytes[j];
     }
-    /* Add to attached devices */
-    for (j = 0; j < flowos.attached_device_count; j++) {
-      if (flowos.attached_devices[j] == flowos.devices[i].ifindex) {
-	break;
-      }
-    }
-    flowos.attached_devices[flowos.attached_device_count] = flowos.devices[i].ifindex;
-    flowos.attached_device_count++;  
-  }
-  
+  }  
   // TODO: handle multiple queues per interface
   // num_queues = GetNumQueues();
   flowos.q_count = NB_RX_QUEUE;
@@ -213,13 +196,26 @@ int flowos_set_device_info() {
 }
 
 int flowos_xmit_packets() {
-  /*  for (int i = 0; i < flowos.attached_device_count; i++) {
-    int idx = flowos.attached_devices[i];
-    if (tx_queue[idx]) {
-      //tx_burst...
-    }
+	int i;
+	for (i = 0; i < flowos.device_count; i++) {
+    if (flowos.devices[i].configured) {
+			//if (flowos.tx_queue[idx]) {
+				//tx_burst...
+			//}
+		}
   } 
-  */
+}
+
+int flowos_tcp_input(flow_t flow, struct rte_mbuf *mbuf) {
+  return -1;
+}
+
+inline void flowos_insert_flow(flow_t flow) {
+	TAILQ_INSERT_TAIL(&flowos.flow_list, flow, list);
+}
+
+inline void flowos_remove_flow(flow_t flow) {
+	TAILQ_REMOVE(&flowos.flow_list, flow, list);
 }
 
 int MAIN(int argc, char **argv) {
@@ -235,9 +231,9 @@ int MAIN(int argc, char **argv) {
   /* Configure NICs */
   flowos_config_devices();
   /* Configure ARP table */
-  flowos_config_arp_table();
+  flowos_config_arp_table("config/arp.conf");
   /* Configure routing table */
-  flowos_config_routing_table();
+  flowos_config_routing_table("config/route.conf");
   /* Start TCP thread */
   //flowos_start_tcp();
   /* Init task scheduler */
@@ -253,25 +249,39 @@ int MAIN(int argc, char **argv) {
     //STAT_COUNT(flowos.runstat.rounds_rx_try);
     /* Read packets into rx_mbufs from NIC */    
     //printf("Read packets into rx_mbufs from NIC\n");
-    for (i = 0; i < flowos.attached_device_count; i++) {
-      int idx = flowos.attached_devices[i];
-      recv_cnt = rte_eth_rx_burst(idx, 0 /* queue_id*/, 
-				  rx_mbufs, MAX_PKT_BURST);
-      if (recv_cnt < 0) {
-	if (errno != EAGAIN && errno != EINTR) {
-	  perror("FlowOS: RX");
-	  rte_exit(EXIT_FAILURE, "FlowOS: failed to retrieve packets from eth%d", ifidx);
-	}
-      }
-      for (j = 0; j < recv_cnt; j++) {
-	printf("Process packet %d\n", i);
-	ret = flowos_process_packet(flowos, idx, ts, rx_mbufs[i]);	
-	if (ret == FALSE) {
-	  printf("FlowOS process_packet failed.\n");	  
-	}
-      }
-      //if (recv_cnt > 0) STAT_COUNT(flowos.runstat.rounds_rx);
-    }
+    for (i = 0; i < flowos.device_count; i++) {
+      if (flowos.devices[i].configured) {
+				//printf("FlowOS reding packet from interface %d\n", i);
+				int idx = i;
+				recv_cnt = rte_eth_rx_burst(idx, 0 /* queue_id*/, rx_mbufs, MAX_PKT_BURST);
+				if (recv_cnt < 0) {
+					if (errno != EAGAIN && errno != EINTR) {
+						perror("FlowOS: RX");
+						rte_exit(EXIT_FAILURE, "FlowOS: failed to retrieve packets from eth%d", i);
+					}
+				}
+				else if (recv_cnt > 0) {
+					//printf("FlowOS received %d packets from interface %d\n", recv_cnt, idx);
+					for (j = 0; j < recv_cnt; j++) {
+						struct ether_hdr *eh = (struct ether_hdr *)rte_pktmbuf_mtod(rx_mbufs[j], struct ether_hdr *);
+						int type = ntohs(eh->ether_type);
+						if (type == ETHER_TYPE_IPv4) {
+							//printf("FlowOS: processing IP packet\n");
+							ret = flowos_process_ipv4_packet(ts, idx, rx_mbufs[j]);
+						} 
+						else if (type == ETHER_TYPE_ARP) {
+							//printf("FlowOS: process ARP packet\n");
+							flowos_process_arp_packet(ts, idx, rx_mbufs[j]);
+						} 
+						else {
+							printf("FlowOS received unknown packet, dropping.\n");
+							rte_pktmbuf_free(rx_mbufs[j]);
+						}
+					}
+				}
+				//if (recv_cnt > 0) STAT_COUNT(flowos.runstat.rounds_rx);
+			}
+		}
     // Send out packets waiting at TX queues
     flowos_xmit_packets();
   } 

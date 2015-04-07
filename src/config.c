@@ -14,38 +14,35 @@
 #include <rte_ethdev.h>
 #include <rte_ether.h>
 
-#include "flowos.h"
 #include "config.h"
 #include "arp.h"
+#include "flowos.h"
 
 #define MAX_OPTLINE_LEN 1024
 #define MAX_PROCLINE_LEN 1024
 
-static const char *arp_file = "config/arp.conf";
-static const char *route_file = "config/route.conf";
-
 /*----------------------------------------*/
-static int get_int_value(char* value) {
+static inline int get_int_value(char* value) {
   int ret = 0;
   ret = strtol(value, (char**)NULL, 10);
   if (errno == EINVAL || errno == ERANGE)
     return -1;
   return ret;
 }
+
 /*----------------------------------------------------*/
 static inline uint32_t mask_from_prefix(int prefix) {
   uint32_t mask = 0;
   uint8_t *mask_t = (uint8_t *)&mask;
-  int i, j;
-  
+  int i, j;  
   for (i = 0; i <= prefix / 8 && i < 4; i++) {
     for (j = 0; j < (prefix - i * 8) && j < 8; j++) {
       mask_t[i] |= (1 << (7 - j));
     }
   }
-
   return mask;
 }
+
 /*----------------------------------------------------*/
 static void flowos_enroll_route_table_entry(char *optstr) {
   char *daddr_s;
@@ -64,40 +61,45 @@ static void flowos_enroll_route_table_entry(char *optstr) {
   assert(dev != NULL);
   
   ifidx = -1;
+	printf("FlowOS: number of devices %d\n", flowos.device_count);
   for (i = 0; i < flowos.device_count; i++) {
+		printf("Name of device %d is %s\n", i, flowos.devices[i].name);
     if (strcmp(dev, flowos.devices[i].name) != 0)
       continue;
-    ifidx = flowos.devices[i].ifindex;
+		if (! flowos.devices[i].configured) {
+			printf("FlowOS error: interface eth%d is not configured\n", i);
+			exit(1);
+		}
+    ifidx = i; //flowos.devices[i].ifindex;
     break;
   }
+
   if (ifidx == -1) {
     printf("FlowOS: interface %s does not exist!\n", dev);
     exit(4);
-  }  
-  ridx = CONFIG.routes++;
-  CONFIG.rtable[ridx].daddr = inet_addr(daddr_s);
-  CONFIG.rtable[ridx].prefix = atoi(prefix);
-  if (CONFIG.rtable[ridx].prefix > 32 || CONFIG.rtable[ridx].prefix < 0) {
+  }
+  ridx = flowos.routes++;
+  flowos.rt[ridx].daddr = inet_addr(daddr_s);
+  flowos.rt[ridx].prefix = atoi(prefix);
+  if (flowos.rt[ridx].prefix > 32 || flowos.rt[ridx].prefix < 0) {
     printf("FlowOS: prefix length should be between 0 - 32.\n");
     exit(4);
   }
   
-  CONFIG.rtable[ridx].mask = mask_from_prefix(CONFIG.rtable[ridx].prefix);
-  CONFIG.rtable[ridx].masked = 
-    CONFIG.rtable[ridx].daddr & CONFIG.rtable[ridx].mask;
-  CONFIG.rtable[ridx].nif = ifidx;
+  flowos.rt[ridx].mask = mask_from_prefix(flowos.rt[ridx].prefix);
+  flowos.rt[ridx].masked = flowos.rt[ridx].daddr & flowos.rt[ridx].mask;
+  flowos.rt[ridx].nif = ifidx;
 }
+
 /*------------------------------------------------*/
-static int config_routing_table_from_file()  {
+static int config_routing_table_from_file(char *file)  {
 #define ROUTES "ROUTES"
-  
+  int i;  
   FILE *fc;
   char optstr[MAX_OPTLINE_LEN];
-  int i;
   
-  printf("FlowOS: loading routing configurations from : %s\n", route_file);
-  
-  fc = fopen(route_file, "r");
+  printf("FlowOS: loading routing configurations from : %s\n", file);  
+  fc = fopen(file, "r");
   if (fc == NULL) {
     perror("fopen");
     printf("FlowOS: skips loading static routing table\n");
@@ -120,18 +122,17 @@ static int config_routing_table_from_file()  {
     
     if (!strncmp(optstr, ROUTES, sizeof(ROUTES) - 1)) {
       num = get_int_value(optstr + sizeof(ROUTES));
-      if (num <= 0)
-	break;
+      if (num <= 0)	break;
       
       for (i = 0; i < num; i++) {
-	if (fgets(optstr, MAX_OPTLINE_LEN, fc) == NULL)
-	  break;
-	
-	if (*optstr == '#') {
-	  i -= 1;
-	  continue;
-	}
-	flowos_enroll_route_table_entry(optstr);
+				if (fgets(optstr, MAX_OPTLINE_LEN, fc) == NULL)
+					break;
+				
+				if (*optstr == '#') {
+					i -= 1;
+					continue;
+				}
+				flowos_enroll_route_table_entry(optstr);
       }
     }
   }
@@ -142,27 +143,29 @@ static int config_routing_table_from_file()  {
 /*--------------------------------------*/
 void flowos_print_routing_table() {
   int i;
-  uint8_t *da;
-  uint8_t *m;
+  uint8_t *dip;
+  uint8_t *mask;
   uint8_t *md;
   
   /* print out process start information */
   printf("FlowOS: Routes\n");
-  for (i = 0; i < CONFIG.routes; i++) {
-    da = (uint8_t *)&CONFIG.rtable[i].daddr;
-    m = (uint8_t *)&CONFIG.rtable[i].mask;
-    md = (uint8_t *)&CONFIG.rtable[i].masked;
+  for (i = 0; i < flowos.routes; i++) {
+    dip = (uint8_t *)&flowos.rt[i].daddr;
+    mask = (uint8_t *)&flowos.rt[i].mask;
+    md = (uint8_t *)&flowos.rt[i].masked;
     printf("Destination: %u.%u.%u.%u/%d, Mask: %u.%u.%u.%u, "
-		 "Masked: %u.%u.%u.%u, Route: eth%d\n", 
-		 da[0], da[1], da[2], da[3], CONFIG.rtable[i].prefix, 
-		 m[0], m[1], m[2], m[3], md[0], md[1], md[2], md[3], 
-		 CONFIG.rtable[i].nif);
+					 "Masked: %u.%u.%u.%u, Route: eth%d\n", 
+					 dip[0], dip[1], dip[2], dip[3], 
+					 flowos.rt[i].prefix, 
+					 mask[0], mask[1], mask[2], mask[3], 
+					 md[0], md[1], md[2], md[3], 
+					 flowos.rt[i].nif);
   }
-  if (CONFIG.routes == 0)
+  if (flowos.routes == 0)
     printf("(blank)\n");
   
   printf("----------------------------------------------------------"
-	 "-----------------------\n");
+				 "-----------------------\n");
 }
 /*------------------------------------------------------------------*/
 static void parse_mac_address(unsigned char *haddr, char *haddr_str) {
@@ -204,38 +207,45 @@ static int parse_ip_address(uint32_t *ip_addr, char *ip_str) {
 }
 
 /*----------------------------------------------------------------------------*/
-int flowos_config_routing_table() {
+int flowos_config_routing_table(char *file) {
   int i, ridx;
   unsigned int c;
   
-  CONFIG.routes = 0;
+  flowos.routes = 0;
   
-  CONFIG.rtable = (struct route_table *)
+  flowos.rt = (struct route_table *)
     rte_calloc("route_table", MAX_DEVICES, sizeof(struct route_table), 0);
-  if (! CONFIG.rtable) 
+  if (! flowos.rt) {
     rte_exit(EXIT_FAILURE, "FlowOS: failed to allocate routing table.");
-  
+  }
   /* set default routing table */
-  for (i = 0; i < CONFIG.eths_num; i ++) {
-    ridx = CONFIG.routes++;
-    CONFIG.rtable[ridx].daddr = CONFIG.eths[i].ip_addr & CONFIG.eths[i].netmask;
+	printf("FlowOS: configuring default routes\n");
+  for (i = 0; i < flowos.device_count; i++) {
+		if (flowos.devices[i].configured) {
+			ridx = flowos.routes++;
+			flowos.rt[ridx].daddr = flowos.devices[i].ip_addr & flowos.devices[i].netmask;
+			
+			flowos.rt[ridx].prefix = 0;
+			c = flowos.devices[i].netmask;
+			while ((c = (c >> 1))){
+				flowos.rt[ridx].prefix++;
+			}
+			flowos.rt[ridx].prefix++;
     
-    CONFIG.rtable[ridx].prefix = 0;
-    c = CONFIG.eths[i].netmask;
-    while ((c = (c >> 1))){
-      CONFIG.rtable[ridx].prefix++;
-    }
-    CONFIG.rtable[ridx].prefix++;
-    
-    CONFIG.rtable[ridx].mask = CONFIG.eths[i].netmask;
-    CONFIG.rtable[ridx].masked = CONFIG.rtable[ridx].daddr;
-    CONFIG.rtable[ridx].nif = flowos.devices[i].ifindex;
+			flowos.rt[ridx].mask = flowos.devices[i].netmask;
+			flowos.rt[ridx].masked = flowos.rt[ridx].daddr;
+			flowos.rt[ridx].nif = i; //flowos.devices[i].ifindex;
+		}
   }
   /* set additional routing table */
-  config_routing_table_from_file();
-  
+	printf("FlowOS: configuring routes from file: %s\n", file);
+  config_routing_table_from_file(file);
+
+	flowos_print_routing_table();
+
   return 0;
 }
+
 /*-------------------------------------------------------------*/
 int get_num_queues() {
   FILE *fp;
@@ -261,34 +271,31 @@ int get_num_queues() {
   
   return queue_cnt;
 }
+
 /*--------------------------------------------------*/
 void flowos_print_interface_info() {
   int i;
   /* print out process start information */
   printf("FlowOS: interfaces:\n");
-  for (i = 0; i < CONFIG.eths_num; i++) {    
-    uint8_t *da = (uint8_t *)&CONFIG.eths[i].ip_addr;
-    uint8_t *nm = (uint8_t *)&CONFIG.eths[i].netmask;
+  for (i = 0; i < flowos.device_count; i++) {    
+		uint8_t *mac = (uint8_t *) flowos.devices[i].mac_addr;
+    uint8_t *ip = (uint8_t *)&flowos.devices[i].ip_addr;
+    uint8_t *mask = (uint8_t *)&flowos.devices[i].netmask;
     
-    printf("name: %s, ifindex: %d, "
-		 "hwaddr: %02X:%02X:%02X:%02X:%02X:%02X, "
-		 "ipaddr: %u.%u.%u.%u, "
-		 "netmask: %u.%u.%u.%u\n",
-		 CONFIG.eths[i].dev_name, 
-		 CONFIG.eths[i].ifindex, 
-		 CONFIG.eths[i].haddr[0],
-		 CONFIG.eths[i].haddr[1],
-		 CONFIG.eths[i].haddr[2],
-		 CONFIG.eths[i].haddr[3],
-		 CONFIG.eths[i].haddr[4],
-		 CONFIG.eths[i].haddr[5],
-		 da[0], da[1], da[2], da[3],
-		 nm[0], nm[1], nm[2], nm[3]);
+    printf("Interface: %s, "
+					 "MAC: %02X:%02X:%02X:%02X:%02X:%02X, "
+					 "IP: %u.%u.%u.%u, "
+					 "NetMask: %u.%u.%u.%u\n",
+					 flowos.devices[i].name, 
+					 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+					 ip[0], ip[1], ip[2], ip[3],
+					 mask[0], mask[1], mask[2], mask[3]);
   }
   printf("Number of NIC queues: %d\n", flowos.q_count);
   printf("----------------------------------------------------------"
-	 "-----------------------\n");
+				 "-----------------------\n");
 }
+
 /*--------------------------------------------------*/
 static void enroll_arp_table_entry(char *optstr) {
   char *dip_s;		/* destination IP string */
@@ -314,14 +321,14 @@ static void enroll_arp_table_entry(char *optstr) {
     return;
   }
   
-  idx = CONFIG.arp.entries++;
-  CONFIG.arp.entry[idx].prefix = prefix;
-  parse_ip_address(&CONFIG.arp.entry[idx].ip, dip_s);
-  parse_mac_address(CONFIG.arp.entry[idx].haddr, daddr_s);
+  idx = flowos.arp.entries++;
+  flowos.arp.entry[idx].prefix = prefix;
+  parse_ip_address(&flowos.arp.entry[idx].ip, dip_s);
+  parse_mac_address(flowos.arp.entry[idx].haddr, daddr_s);
   
   dip_mask = mask_from_prefix(prefix);
-  CONFIG.arp.entry[idx].ip_mask = dip_mask;
-  CONFIG.arp.entry[idx].ip_masked = CONFIG.arp.entry[idx].ip & dip_mask;
+  flowos.arp.entry[idx].ip_mask = dip_mask;
+  flowos.arp.entry[idx].ip_masked = flowos.arp.entry[idx].ip & dip_mask;
   
 /*
   int i, cnt;
@@ -329,22 +336,23 @@ static void enroll_arp_table_entry(char *optstr) {
   cnt = cnt << (32 - prefix);
   
   for (i = 0; i < cnt; i++) {
-  idx = CONFIG.arp.entries++;
-  CONFIG.arp.entry[idx].ip = htonl(ntohl(ip) + i);
-  memcpy(CONFIG.arp.entry[idx].haddr, haddr, ETH_ALEN);
+  idx = flowos.arp.entries++;
+  flowos.arp.entry[idx].ip = htonl(ntohl(ip) + i);
+  memcpy(flowos.arp.entry[idx].haddr, haddr, ETH_ALEN);
   }
 */
 }
+
 /*---------------------------------------------------------*/
-int flowos_config_arp_table() {
+int flowos_config_arp_table(char *file) {
 #define ARP_ENTRY "ARP_ENTRY"
   FILE *fc;
   char optstr[MAX_OPTLINE_LEN];
   int numEntry = 0;
   int hasNumEntry = 0;
   
-  printf("FlowOS: loading ARP table from : %s\n", arp_file);  
-  fc = fopen(arp_file, "r");
+  printf("FlowOS: loading ARP table from : %s\n", file);  
+  fc = fopen(file, "r");
   if (fc == NULL) {
     perror("fopen");
     printf("FlowOS: skips loading static ARP table\n");
@@ -374,22 +382,22 @@ int flowos_config_arp_table() {
     if (!hasNumEntry && strncmp(p, ARP_ENTRY, sizeof(ARP_ENTRY)-1) == 0) {
       numEntry = get_int_value(p + sizeof(ARP_ENTRY));
       if (numEntry <= 0) {
-	rte_exit(EXIT_FAILURE, "FlowOS: invalid ARP entry in arp.conf: %s\n", p);
+				rte_exit(EXIT_FAILURE, "FlowOS: invalid ARP entry in arp.conf: %s\n", p);
       }
 #if 0
-      CONFIG.arp.entry = (struct arp_entry *)
-	rte_calloc("arp_entry", numEntry + MAX_ARPENTRY, sizeof(struct arp_entry), 0);
-      if (CONFIG.arp.entry == NULL) {
-	rte_exit(EXIT_FAILURE, "FlowOS: invalid ARP entry in arp.conf: %s\n", p);
+      flowos.arp.entry = (struct arp_entry *)
+				rte_calloc("arp_entry", numEntry + MAX_ARPENTRY, sizeof(struct arp_entry), 0);
+      if (flowos.arp.entry == NULL) {
+				rte_exit(EXIT_FAILURE, "FlowOS: invalid ARP entry in arp.conf: %s\n", p);
       }
 #endif
       hasNumEntry = 1;
     } 
     else {
       if (numEntry <= 0) {
-	rte_exit(EXIT_FAILURE, 
-		 "Error in arp.conf: more entries than "
-		 "are specifed, entry=%s\n", p);
+				rte_exit(EXIT_FAILURE, 
+								 "Error in arp.conf: more entries than "
+								 "are specifed, entry=%s\n", p);
       }
       printf("FlowOS: setting ARP entry: %s, count=%d\n", p, numEntry);
       enroll_arp_table_entry(p);
@@ -400,6 +408,85 @@ int flowos_config_arp_table() {
   fclose(fc);
   return 0;
 }
+
+static int get_next_line(FILE *file, char *line) {
+	char *ptr;
+	char *temp;    	
+	while (1) {
+    if (fgets(line, MAX_OPTLINE_LEN, file) == NULL)
+      return 0;
+    ptr = line;
+    // skip comment
+    if ((temp = strchr(ptr, '#')) != NULL) *temp = 0;
+    // remove front white spaces
+    while (*ptr && isspace((int)*ptr)) ptr++;
+		// remove tailing white spaces
+    temp = ptr + strlen(ptr) - 1;
+    while (temp >= ptr && isspace((int)*temp)) {
+			*temp = '\0';
+			temp--;
+		}
+    if (*ptr == '\0') continue;
+		else break;
+	}
+	memcpy(line, ptr, strlen(ptr));
+	line[strlen(ptr)] = '\0';
+	return strlen(ptr);
+}
+
+/*-------------------------------------------------------------*/
+int flowos_config_interfaces(char *file) {
+  FILE *fc;
+  char line[MAX_OPTLINE_LEN];
+	char *p1, *q1, *p2, *q2, *p3, *q3;
+	
+  int ret, idx, numEntry = 0;
+  
+  printf("FlowOS: loading interface config: %s\n", file);  
+  fc = fopen(file, "r");
+  if (fc == NULL) {
+    perror("fopen");
+    printf("FlowOS: skips loading static interface configuration\n");
+    return -1;
+  }
+	while (get_next_line(fc, line) > 0) {
+		/* Parse interface configuration */
+		p1 = strtok(line, " \t=");
+		q1 = strtok(NULL, " \t=");
+		p2 = strtok(NULL, " \t=");
+		q2 = strtok(NULL, " \t=");
+		p3 = strtok(NULL, " \t=");
+		q3 = strtok(NULL, " \t=");
+		assert(p1 && q1 && p2 && q2 && p3 && q3);
+		/* Parse interface index */
+		idx = atoi(q1); 
+		if (strcmp(p1, "ifconfig") != 0 || 
+				idx < 0 || idx >= flowos.device_count) {
+			printf("FlowOS: invalind configuration option, %s %s, expects ifconfig index\n", p1, q1);
+			fclose(fc);
+			return numEntry;
+		}
+		/* Parse interface IP address */
+		ret = parse_ip_address(&flowos.devices[idx].ip_addr, q2);
+		if (strcmp(p2, "address") != 0 || ret < 0) {
+			printf("FlowOS: invalid ifconfig option %s %s, expects address IP\n", p2, q2);
+			fclose(fc);
+			return numEntry;
+		}
+		/* Parse interface netmask */
+		ret = parse_ip_address(&flowos.devices[idx].netmask, q3);
+    if (strcmp(p3, "netmask") != 0 || ret < 0) {      
+			printf("FlowOS: invalid ifconfig option %s %s, expects netmask mask\n", p3, q3);
+			fclose(fc);
+			return numEntry;
+		}
+		flowos.devices[idx].configured = 1; 
+		numEntry++;
+  }
+  fclose(fc);
+	return numEntry;
+}
+
 /*-------------------------------------------------*/
 static int parse_tcp_config(char *line) {
   int idx;
@@ -413,126 +500,72 @@ static int parse_tcp_config(char *line) {
     printf("FlowOS: no option name found for the line: %s\n", line);
     return -1;
   }
-  
   q = strtok(NULL, " \t=");
   if (q == NULL) {
     printf("FlowOS: no option value found for the line: %s\n", line);
     return -1;
   }
-  /* Interface IP address and netmask configuration */
-  if (strcmp(p, "eth_index") == 0) {
-    idx = atoi(q);
-    printf("ipconfig: %s=%d\n", p, idx);
-    p = strtok(NULL, " \t=");
-    if (p == NULL) {
-      printf("FlowOS: option eth_index requires ip_addr and netmask: %s\n", line);
-      return -1;
-    }  
-    printf("ipconfig: %s\n", p);
-    q = strtok(NULL, " \t=");
-    if (q == NULL) {
-      printf("FlowOS: no value found for option %s for the line: %s\n", p, line);
-      return -1;
-    }
-    printf("ipconfig: %s\n", q);
-    p1 = strtok(NULL, " \t=");
-    if (p1 == NULL) {
-      printf("FlowOS: option eth_index requires ip_addr and netmask: %s\n", line);
-      return -1;
-    }  
-    printf("ipconfig: %s\n", p1);
-    q1 = strtok(NULL, " \t=");
-    if (q1 == NULL) {
-      printf("FlowOS: no value found for option %s for the line: %s\n", p, line);
-      return -1;
-    }
-    printf("ipconfig: %s\n", q1);
-    if (strcmp(p, "ip_addr") == 0 && strcmp(p1, "netmask") == 0) {
-      if (parse_ip_address(&flowos.devices[idx].ip_addr, q) == -1) {
-	printf("FlowOS: invalid IP address: %s on line: %s\n", q, line);
-	return -1;
-      }
-      if (parse_ip_address(&flowos.devices[idx].netmask, q1) == -1) {
-	printf("FlowOS: invalid netmask: %s on line: %s\n", q1, line);
-	return -1;
-      }
-    }
-    else if (strcmp(p, "netmask") == 0 && strcmp(p1, "ip_addr") == 0)  {
-      if (parse_ip_address(&flowos.devices[idx].ip_addr, q1) == -1) {
-	printf("FlowOS: invalid IP address: %s on line: %s\n", q1, line);
-	return -1;
-      }
-      if (parse_ip_address(&flowos.devices[idx].netmask, q) == -1) {
-	printf("FlowOS: invalid netmask: %s on line: %s\n", q, line);
-	return -1;
-      }
-    }
-    else {  
-      printf("FlowOS: invalid IP configuration for line: %s\n", line);
-      return -1;
-    }
-  }
   else if (strcmp(p, "num_cores") == 0) {
-    CONFIG.num_cores = atoi(q);
-    if (CONFIG.num_cores <= 0) {
-      printf("FlowOS: number of cores should be larger than 0.\n");
+    flowos.tcp.num_cpus = atoi(q);
+    if (flowos.tcp.num_cpus <= 0) {
+      printf("FlowOS: number of CPU cores should be larger than 0.\n");
       return -1;
     }
-    if (CONFIG.num_cores > flowos.cpu_count) {
+    if (flowos.tcp.num_cpus > flowos.cpu_count) {
       printf("FlowOS: number of cores should be smaller than "
 		   "# physical CPU cores.\n");
       return -1;
     }
-  } 
+  }
   else if (strcmp(p, "max_concurrency") == 0) {
-    CONFIG.max_concurrency = atoi(q);
-    if (CONFIG.max_concurrency < 0) {
+		flowos.tcp.max_concurrency = atoi(q);
+    if (flowos.tcp.max_concurrency < 0) {
       printf("FlowOS: the maximum concurrency should be larger than 0.\n");
       return -1;
     }
   } 
   else if (strcmp(p, "max_num_buffers") == 0) {
-    CONFIG.max_num_buffers = atoi(q);
-    if (CONFIG.max_num_buffers < 0) {
+    flowos.tcp.max_num_buffers = atoi(q);
+    if (flowos.tcp.max_num_buffers < 0) {
       printf("FlowOS: the maximum # buffers should be larger than 0.\n");
       return -1;
     }
   } 
   else if (strcmp(p, "rcvbuf") == 0) {
-    CONFIG.rcvbuf_size = atoi(q);
-    if (CONFIG.rcvbuf_size < 64) {
+    flowos.tcp.rcvbuf_size = atoi(q);
+    if (flowos.tcp.rcvbuf_size < 64) {
       printf("FlowOS: receive buffer size should be larger than 64.\n");
       return -1;
     }
   } 
   else if (strcmp(p, "sndbuf") == 0) {
-    CONFIG.sndbuf_size = atoi(q);
-    if (CONFIG.sndbuf_size < 64) {
+    flowos.tcp.sndbuf_size = atoi(q);
+    if (flowos.tcp.sndbuf_size < 64) {
       printf("FlowOS: send buffer size should be larger than 64.\n");
       return -1;
     }
   } 
   else if (strcmp(p, "tcp_timeout") == 0) {
-    CONFIG.tcp_timeout = atoi(q);
-    if (CONFIG.tcp_timeout > 0) {
-      CONFIG.tcp_timeout = SEC_TO_USEC(CONFIG.tcp_timeout) / TIME_TICK;
+    flowos.tcp.tcp_timeout = atoi(q);
+    if (flowos.tcp.tcp_timeout > 0) {
+      flowos.tcp.tcp_timeout = SEC_TO_USEC(flowos.tcp.tcp_timeout) / TIME_TICK;
     }
   } 
   else if (strcmp(p, "tcp_timewait") == 0) {
-    CONFIG.tcp_timewait = atoi(q);
-    if (CONFIG.tcp_timewait > 0) {
-      CONFIG.tcp_timewait = SEC_TO_USEC(CONFIG.tcp_timewait) / TIME_TICK;
+    flowos.tcp.tcp_timewait = atoi(q);
+    if (flowos.tcp.tcp_timewait > 0) {
+      flowos.tcp.tcp_timewait = SEC_TO_USEC(flowos.tcp.tcp_timewait) / TIME_TICK;
     }
   } 
-  else if (strcmp(p, "stat_print") == 0) {
-    int i;
+  /* else if (strcmp(p, "stat_print") == 0) { */
+  /*   int i; */
     
-    for (i = 0; i < CONFIG.eths_num; i++) {
-      if (strcmp(CONFIG.eths[i].dev_name, q) == 0) {
-	CONFIG.eths[i].stat_print = 1; // TRUE
-      }
-    }
-  } 
+  /*   for (i = 0; i < flowos.device_count; i++) { */
+  /*     if (strcmp(flowos.devices[i].name, q) == 0) { */
+	/* 			flowos.devices[i].stat_print = 1; // TRUE */
+  /*     } */
+  /*   } */
+  /* }  */
   else {
     printf("FlowOS: unknown option type: %s\n", line);
     return -1;
@@ -554,15 +587,15 @@ int flowos_config_tcp(char *fname) {
     perror("fopen");
     printf("FlowOS: failed to load configuration file: %s\n", fname);
     return -1;
-  }  
+  }
   /* set default configuration */
-  CONFIG.num_cores = flowos.cpu_count;
-  CONFIG.max_concurrency = 100000;
-  CONFIG.max_num_buffers = 100000;
-  CONFIG.rcvbuf_size = 8192;
-  CONFIG.sndbuf_size = 8192;
-  CONFIG.tcp_timeout = TCP_TIMEOUT;
-  CONFIG.tcp_timewait = TCP_TIMEWAIT;
+  flowos.tcp.num_cpus = 1; // flowos.cpu_count;
+  flowos.tcp.max_concurrency = 100000;
+  flowos.tcp.max_num_buffers = 100000;
+  flowos.tcp.rcvbuf_size = 8192;
+  flowos.tcp.sndbuf_size = 8192;
+  flowos.tcp.tcp_timeout = TCP_TIMEOUT;
+  flowos.tcp.tcp_timewait = TCP_TIMEWAIT;
   
   while (1) {
     char *p;
@@ -599,32 +632,33 @@ void flowos_print_tcp_config() {
   
   printf("FlowOS: TCP configurations:\n");
   printf("Number of CPU cores available: %d\n", flowos.cpu_count);
-  printf("Number of CPU cores to use: %d\n", CONFIG.num_cores);
+  printf("Number of CPU cores to use: %d\n", flowos.tcp.num_cpus);
   printf("Maximum number of concurrency per core: %d\n", 
-	       CONFIG.max_concurrency);
+	       flowos.tcp.max_concurrency);
   
   printf("Maximum number of preallocated buffers per core: %d\n", 
-	       CONFIG.max_num_buffers);
-  printf("Receive buffer size: %d\n", CONFIG.rcvbuf_size);
-  printf("Send buffer size: %d\n", CONFIG.sndbuf_size);
+	       flowos.tcp.max_num_buffers);
+  printf("Receive buffer size: %d\n", flowos.tcp.rcvbuf_size);
+  printf("Send buffer size: %d\n", flowos.tcp.sndbuf_size);
 	
-  if (CONFIG.tcp_timeout > 0) {
+  if (flowos.tcp.tcp_timeout > 0) {
     printf("TCP timeout seconds: %d\n", 
-		 USEC_TO_SEC(CONFIG.tcp_timeout * TIME_TICK));
+		 USEC_TO_SEC(flowos.tcp.tcp_timeout * TIME_TICK));
   } 
   else {
     printf("TCP timeout check disabled.\n");
   }
   printf("TCP timewait seconds: %d\n", 
-	       USEC_TO_SEC(CONFIG.tcp_timewait * TIME_TICK));
-  printf("NICs to print statistics:");
-  for (i = 0; i < CONFIG.eths_num; i++) {
-    if (CONFIG.eths[i].stat_print) {
-      printf(" %s", CONFIG.eths[i].dev_name);
-    }
-  }
+	       USEC_TO_SEC(flowos.tcp.tcp_timewait * TIME_TICK));
+
+  /* printf("NICs to print statistics:"); */
+  /* for (i = 0; i < flowos.devices_count; i++) { */
+  /*   if (flowos.devices[i].stat_print) { */
+  /*     printf(" %s", flowos.devices[i].dev_name); */
+  /*   } */
+  /* } */
   printf("\n");
   printf("----------------------------------------------------------"
-    "-----------------------\n");
+				 "-----------------------\n");
 }
 /*--------------------------------------------------------------*/

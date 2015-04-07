@@ -14,7 +14,18 @@ lib_LTLIBRARIES = libflowos.la
 
 libflowos_la_LDFLAGS = -all-static
 
-libflowos_la_SOURCES = config.c packet.c eth_in.c eth_out.c arp.c ip_in.c scheduler.c task.c channel.c 
+libflowos_la_SOURCES =  config.c \
+			pipeline.c \
+			protocol.c \
+			flow.c \
+			packet.c \
+			eth_in.c \
+			eth_out.c \
+			arp.c \
+			ip_in.c \
+			scheduler.c \
+			task.c \
+			channel.c 
 
 FlowOS_SOURCES = flowos.c
 

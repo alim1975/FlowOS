@@ -1,8 +1,8 @@
 /** Copyright (c) 2011 M. Abdul Alim, Lancaster University 
  * FlowOS main header file 
  */
-#ifndef _FLOWOS_H_
-#define _FLOWOS_H_
+#ifndef __FLOWOS__
+#define __FLOWOS__
 
 #include <rte_common.h>
 #include <rte_mbuf.h>
@@ -39,20 +39,20 @@
 
 #define NB_TX_QUEUE 1
 
-#define	NB_RX_DESC 256
+#define	NB_RX_DESC 128
 
-#define	NB_TX_DESC 256
+#define	NB_TX_DESC 128
 
 #define CACHE_SIZE 64
 
-struct eth_table {
-  char dev_name[128];
-  int ifindex;
-  int stat_print;
-  unsigned char haddr[ETH_ALEN];
-  uint32_t netmask;
-  uint32_t ip_addr;
-};
+/* struct eth_table { */
+/*   char dev_name[128]; */
+/*   int ifindex; */
+/*   int stat_print; */
+/*   unsigned char haddr[ETH_ALEN]; */
+/*   uint32_t netmask; */
+/*   uint32_t ip_addr; */
+/* }; */
 
 struct route_table {
   uint32_t daddr;
@@ -75,21 +75,12 @@ struct arp_table {
   int entries;
 };
 
-struct flowos_config {
-  /* network interface config */
-  int eths_num;                 /* # of interfaces */
-  struct eth_table *eths;       /* interface table */
-  /* route config */
-  int routes;	       	        /* # of entries */
-  struct route_table *rtable;	/* routing table */  
-  /* arp config */
-  struct arp_table arp;
-  /* # of CPU cores */  
-  int num_cores;
-  
-  int max_concurrency;
-  
+struct tcpconf {
+	int num_cpus;
+
+  int max_concurrency;  
   int max_num_buffers;
+
   int rcvbuf_size;
   int sndbuf_size;
   
@@ -101,31 +92,39 @@ struct flowos_config {
 struct flowos {
   int done;
   /* list of flows */
-  TAILQ_HEAD(, flow) flow_list;  
+  TAILQ_HEAD(, flow) flows;  
   /* list of decoders */
-  TAILQ_HEAD(, decoder) decoder_list;
+  TAILQ_HEAD(, decoder) decoders;
+	/* FlowOS stats */
   unsigned long pktprocessed;
   unsigned long pktdropped;
-
+	/* CPU cores dedicated for FlowOS */
   int cpu_count;
-  int q_count;
-
-  int device_count;
-  struct dpdk_device devices[MAX_DEVICES];
-
-  int attached_device_count;
-  int attached_devices[MAX_DEVICES];
-  
+	/* Pre-allocated packets for RX and TX */
   struct rte_mempool *rx_pool;
   struct rte_mempool *tx_pool;
+	/* interface config */
+  int q_count;
+  int device_count;
+  struct dpdk_device devices[MAX_DEVICES];
+	/* TX ring for each device */
+  struct dpdk_burst tx_burst[MAX_DEVICES];
+
+	/* ARP table */
+	struct arp_table arp;
+  /* routing table */
+  int routes;	            /* # of entries */
+  struct route_table *rt;	/* routing table */  	
+
+	/* TCP configuration */
+	struct tcpconf tcp;
 };
 typedef struct flowos* flowos_t;
 
 struct flowos flowos;
-struct flowos_config CONFIG;
 
-extern int          udp_encap_init(void);
-extern void         udp_encap_close(void);
+/* extern int          udp_encap_init(void); */
+/* extern void         udp_encap_close(void); */
 
 /* int                 flowos_xmit_mbuf(struct flow *flow, struct rte_mbuf *mbuf); */
 /* extern int          flowos_send_message(struct flowos_msghdr *); */
@@ -136,4 +135,8 @@ extern void         udp_encap_close(void);
 /* void                flowos_release_packet(struct flowos_pm *thread, struct packet *pkt); */
 
 int                 is_flow_table_empty(void);
-#endif
+void                flowos_insert_flow(flow_t flow);
+void                flowos_remove_flow(flow_t flow);
+
+int                 flowos_tcp_input(flow_t flow, struct rte_mbuf *mbuf);
+#endif /* __FLOWOS__ */

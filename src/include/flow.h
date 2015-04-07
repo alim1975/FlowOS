@@ -1,5 +1,5 @@
-#ifndef __FLOW_H__
-#define __FLOW_H__
+#ifndef __FLOW__
+#define __FLOW__
 
 #include <stdio.h>
 #include <stdint.h>
@@ -38,7 +38,7 @@ struct flow {
 };
 typedef struct flow* flow_t;
 
-flow_t  flow_create(struct flowid id, char *fname);
+flow_t  flow_create(flowid_t id, char *name);
 
 void    flow_delete(flow_t flow); 
 
@@ -67,4 +67,4 @@ extern pthread_t *flowos_find_pm(char *name);
 extern void      flowos_save_pm(pthread_t *);
 extern int       flowos_remove_pm(char *name);
 */
-#endif /* __FLOW_H__ */
+#endif /* __FLOW__ */

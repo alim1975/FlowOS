@@ -1,5 +1,5 @@
-#ifndef __ETH_IN_H__
-#define __ETH_IN_H__
+#ifndef __ETHIN__
+#define __ETHIN__
 
 #include <rte_mbuf.h>
 
@@ -14,8 +14,8 @@
 typedef struct flowos* flowos_t;
 
 int flowos_process_packet(flowos_t flowos, 
-			  const int ifidx, 
-			  uint32_t cur_ts, 
-			  struct rte_mbuf *pkt);
+													int idx, 
+													uint32_t cur_ts, 
+													struct rte_mbuf *pkt);
 
-#endif /* __ETH_IN_H__ */
+#endif /* __ETHIN__ */

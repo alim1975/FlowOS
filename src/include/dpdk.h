@@ -1,5 +1,5 @@
-#ifndef __DPDK_H__
-#define __DPDK_H__
+#ifndef __DPDK__
+#define __DPDK__
 
 #include<rte_mbuf.h>
 
@@ -18,11 +18,10 @@
 
 struct dpdk_device {
   char name[IFNAMSIZ];
-  char dev_addr[ETH_ALEN]; // MAC address
+  char mac_addr[ETH_ALEN]; // MAC address
   uint32_t ip_addr;        // network order
   uint32_t netmask;        // network order
-  int ifindex;             // port number
-  int kifindex;            // kernel ifindex
+  int configured;          // port configured
   int num_rx_queues;
   int num_tx_queues;
 };
@@ -82,4 +81,4 @@ struct dpdk_event {
 	nids_set rx_nids;
 	nids_set tx_nids;
 };
-#endif /* __DPDK_H__ */
+#endif /* __DPDK__ */

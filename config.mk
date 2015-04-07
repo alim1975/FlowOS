@@ -1,8 +1,7 @@
-AM_CFLAGS = -pg -O2 -include $(top_srcdir)/libs/dpdk/build/include/rte_config.h \
+AM_CFLAGS = -pg -include $(top_srcdir)/libs/dpdk/build/include/rte_config.h \
   -I$(top_srcdir)/libs/dpdk/build/include -I$(top_srcdir)/src/include
 
 AM_LDFLAGS = \
-        -L$(top_srcdir)/libs/mtcp/lib \
         -L$(top_srcdir)/libs/dpdk/build/lib \
 	-Wl,--whole-archive \
 	-Wl,-lrte_distributor \

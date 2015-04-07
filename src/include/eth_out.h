@@ -1,18 +1,15 @@
-#ifndef __ETH_OUT_H_
-#define __ETH_OUT_H_
+#ifndef __ETH_OUTPUT__
+#define __ETH_OUTPUT__
 
 #include <stdint.h>
 
-#include "flowos.h"
-
 #define ETHERNET_HEADER_LEN 14
 
-int flowos_send_packet_burst(flowos_t flowos, int nif);
+int flowos_send_packet_burst(int nif);
 
-struct rte_mbuf *flowos_eth_output(flowos_t flowos, 
-				   uint16_t h_proto,
-				   int nif, 
-				   unsigned char* dst_mac, 
-				   uint16_t iplen);
+struct rte_mbuf *flowos_eth_output(uint16_t type,
+																	 int nif, 
+																	 unsigned char* dst_mac, 
+																	 uint16_t iplen);
 
-#endif /* __ETH_OUT_H_ */
+#endif /* __ETH_OUTPUT__ */

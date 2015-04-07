@@ -1,25 +1,20 @@
-#ifndef __CONFIG_H__
-#define __CONFIG_H__
+#ifndef __CONFIG__
+#define __CONFIG__
 
-int flowos_load_tcp_config(char *fname);
+int flowos_config_interfaces(char *file);
 
-/* set configurations from the setted 
-   interface information */
-int flowos_set_device_info();
+void flowos_print_interface_info();
 
-/* set configurations from the files */
-int flowos_config_routing_table();
+int flowos_config_arp_table(char *file);
 
-int flowos_config_arp_table();
-
-/* print setted configuration */
-void flowos_print_tcp_config();
-
-void flowos_print_interface_config();
+int flowos_config_routing_table(char *file);
 
 void flowos_print_routing_table();
 
-/* set socket modes */
+int flowos_config_tcp(char *file);
+
+void flowos_print_tcp_config();
+
 int set_socket_mode(int8_t socket_mode);
 
-#endif /* __CONFIG_H__ */
+#endif /* __CONFIG__ */

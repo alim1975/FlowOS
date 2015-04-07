@@ -4,10 +4,8 @@
 #include <rte_common.h>
 #include <rte_eal.h>
 
-void hello(void *data) {
-  task_t This = (task_t) data;
-  char *name = This->data;
-  printf("%s: says hello.\n", name);
+void hello(task_t task) {
+  printf("%s: says hello.\n", task->name);
 }
 
 #define MAIN main
@@ -33,11 +31,11 @@ int MAIN(int argc, char **argv) {
   for (i = 0; i < 2048; i++) {
     sprintf(name, "task-%d", i);
     printf("Scheduler test is creating task: %s\n", name);
-    task_t t = task_create(hello, strdup(name), 0, 0);
+    task_t t = task_create(hello, name, NULL, 0, 0);
     printf("Scheduler is submitting task: %s\n", name);
     if (task_is_runnable(t))
       scheduler_submit(t);
-    while(task_is_running(t)); //spin
+    while(task_is_running(t)); //spin until task returns
     task_destroy(t);
   }
   scheduler_destroy();
